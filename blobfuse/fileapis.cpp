@@ -93,6 +93,19 @@ int azs_open(const char *path, struct fuse_file_info *fi)
                 return -1;
             }
 
+            if (config_options.cacheSize > 0) {
+                // Check if file can fit in the limited cache size or not
+                // if not fail the operation of open
+                BfsFileProperty blob_property = storage_client->GetProperties(pathString.substr(1));
+                if ((errno == 0) && blob_property.isValid() && blob_property.exists()) {
+                    if (blob_property.size > config_options.cacheSize) {
+                        syslog(LOG_ERR, "File %s is bigger then configured cache. File size %llu\n", 
+                            mntPathString.c_str(),  blob_property.size);
+                        return -1;
+                    }
+                }
+            }
+
             errno = 0;
             time_t last_modified = {};
             long int size = storage_client->DownloadToFile(pathString.substr(1), mntPathString, last_modified);
