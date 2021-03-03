@@ -374,7 +374,8 @@ int azs_release(const char *path, struct fuse_file_info * fi)
     // It will not release any locks acquired from other calls to open(), in this process or in others.
     // If the file handle is invalid, this will fail with EBADF, which is not an issue here.
     flock(((struct fhwrapper *)fi->fh)->fh, LOCK_UN);
-
+    //testing if this works for multithreaded
+    fdatasync(((struct fhwrapper *)fi->fh)->fh);
     // Close the file handle.
     // This must be done, even if the file no longer exists, otherwise we're leaking file handles.
     close(((struct fhwrapper *)fi->fh)->fh);
