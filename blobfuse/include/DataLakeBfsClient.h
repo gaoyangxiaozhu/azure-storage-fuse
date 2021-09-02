@@ -85,6 +85,10 @@ private:
     /// Helper function - Authenticates with spn
     ///</summary>
     std::shared_ptr<adls_client_ext> authenticate_adls_spn();
+    /// <summary>
+    /// Helper function - Autheticates with AAD
+    /// </summary>
+    std::shared_ptr<adls_client_ext> authenticate_adls_aad();
     ///<summary>
     /// Helper function - Renames cached files
     ///</summary>

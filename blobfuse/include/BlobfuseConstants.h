@@ -27,6 +27,7 @@ enum D_RETURN_CODE
 enum AUTH_TYPE {
     MSI_AUTH,
     SAS_AUTH,
+    AAD_AUTH,
     KEY_AUTH,
     SPN_AUTH,
     INVALID_AUTH

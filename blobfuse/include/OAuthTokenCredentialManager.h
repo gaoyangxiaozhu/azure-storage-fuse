@@ -98,6 +98,13 @@ std::function<OAuthToken(std::shared_ptr<CurlEasyClient>)> SetUpSPNCallback(
         std::string aad_endpoint_p = "");
 // BIG CONCERN: Taking in credentials via a plaintext file is a no-no security wise. For now, they'll only be taken in via the environment variable.
 
+/// <summary>
+/// SetupTokenServiceCallback sets up a refresh callback for add auth using token service. This should be used to create a OAuthTokenManager instance.
+/// </summary>
+std::function<OAuthToken(std::shared_ptr<CurlEasyClient>)> SetUpTokenServiceCallback(
+    std::string job_session_p = "",
+    std::string linked_service_p = "",
+    std::string ts_endpoint_p = "");
 
  /// <summary>
 /// Checks if passed in token is expired. 

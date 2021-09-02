@@ -30,6 +30,10 @@ bool DataLakeBfsClient::AuthenticateStorage()
             m_adls_client = authenticate_adls_spn();
             m_blob_client = authenticate_blob_spn();
             break;
+        case AAD_AUTH:
+            m_adls_client = authenticate_adls_aad();
+            m_blob_client = autheticate_blob_aad();
+            break;
         default:
             return false;
             break;
@@ -286,6 +290,60 @@ std::shared_ptr<adls_client_ext> DataLakeBfsClient::authenticate_adls_spn()
         }
     }
     catch(const std::exception &ex)
+    {
+        syslog(LOG_ERR, "Failed to create blob client.  ex.what() = %s. Please check your account name and ", ex.what());
+        errno = blobfuse_constants::unknown_error;
+        return NULL;
+    }
+}
+std::shared_ptr<adls_client_ext> DataLakeBfsClient::authenticate_adls_aad()
+{
+    syslog(LOG_DEBUG, "Authenticating using AAD");
+    try
+    {
+        //1. get oauth token
+        std::function<OAuthToken(std::shared_ptr<CurlEasyClient>)> TokenServiceCallback = SetUpTokenServiceCallback(
+            configurations.jobSessionToken,
+            configurations.linkedService,
+            configurations.tokenServiceUrl);
+
+        std::shared_ptr<OAuthTokenCredentialManager> tokenManager = GetTokenManagerInstance(TokenServiceCallback);
+
+        if (!tokenManager->is_valid_connection()) {
+            // todo: isolate definitions of errno's for this function so we can output something meaningful.
+            errno = 1;
+            return NULL;
+        }
+
+        //2. try to make blob client wrapper using oauth token
+        std::shared_ptr<storage_credential> cred = std::make_shared<token_credential>("");
+        cred->set_token_callback(&GetTokenCallback);
+        std::shared_ptr<storage_account> account = std::make_shared<storage_account>(
+            configurations.accountName,
+            cred,
+            true, //use_https must be true to use oauth
+            configurations.blobEndpoint);
+
+        errno = 0;
+        if (configurations.caCertFile.empty())
+        {
+            return std::make_shared<adls_client_ext>(
+                account,
+                configurations.concurrency,
+                false); //If this applies to blobs in the future, we can use this as a feature to exit
+                                // blobfuse if we run into anything unexpected instead of logging errors
+        }
+        else
+        {
+            return std::make_shared<adls_client_ext>(
+                account,
+                configurations.concurrency,
+                configurations.caCertFile,
+                configurations.httpsProxy,
+                false);
+        }
+    }
+    catch (const std::exception& ex)
     {
         syslog(LOG_ERR, "Failed to create blob client.  ex.what() = %s. Please check your account name and ", ex.what());
         errno = blobfuse_constants::unknown_error;

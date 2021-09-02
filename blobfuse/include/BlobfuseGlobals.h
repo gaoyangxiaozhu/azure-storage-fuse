@@ -39,6 +39,9 @@ struct configParams
     std::string blobEndpoint;
     std::string accountKey;
     std::string sasToken;
+    std::string linkedService;
+    std::string tokenServiceUrl;
+    std::string jobSessionToken;
     std::string identityClientId;
     std::string spnClientId;
     std::string spnClientSecret;

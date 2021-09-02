@@ -22,6 +22,9 @@ bool BlockBlobBfsClient::AuthenticateStorage()
     case SPN_AUTH:
         m_blob_client = authenticate_blob_spn();
         break;
+    case AAD_AUTH:
+        m_blob_client = autheticate_blob_aad();
+        break;
     default:
         return false;
         break;
@@ -223,7 +226,7 @@ std::shared_ptr<blob_client_wrapper> BlockBlobBfsClient::authenticate_blob_msi()
 }
 std::shared_ptr<blob_client_wrapper> BlockBlobBfsClient::authenticate_blob_spn()
 {
-    syslog(LOG_DEBUG, "Authenticating using SPN");
+    syslog(LOG_DEBUG, "Authenticating using AAD");
     try
     {
         //1. get oauth token
@@ -278,6 +281,64 @@ std::shared_ptr<blob_client_wrapper> BlockBlobBfsClient::authenticate_blob_spn()
         errno = blobfuse_constants::unknown_error;
         return std::make_shared<blob_client_wrapper>(false);
     }
+}
+std::shared_ptr<blob_client_wrapper> BlockBlobBfsClient::autheticate_blob_aad() 
+{
+    syslog(LOG_DEBUG, "Authenticating using AAD");
+    try
+    {
+        //1. get oauth token
+        std::function<OAuthToken(std::shared_ptr<CurlEasyClient>)> TokenServiceCallback = SetUpTokenServiceCallback(
+            configurations.jobSessionToken, 
+            configurations.linkedService,
+            configurations.tokenServiceUrl);
+
+        std::shared_ptr<OAuthTokenCredentialManager> tokenManager = GetTokenManagerInstance(TokenServiceCallback);
+
+        if (!tokenManager->is_valid_connection())
+        {
+            // todo: isolate definitions of errno's for this function so we can output something meaningful.
+            errno = 1;
+            syslog(LOG_ERR, "Failed to get token using AAD via token service.");
+            return std::make_shared<blob_client_wrapper>(false);
+        }
+
+        //2. try to make blob client wrapper using oauth token
+        // We should pass the token obtained earlier to this token_credentials
+        std::shared_ptr<storage_credential> cred = std::make_shared<token_credential>("");
+        cred->set_token_callback(&GetTokenCallback);
+
+        std::shared_ptr<storage_account> account = std::make_shared<storage_account>(
+            configurations.accountName,
+            cred,
+            true, //use_https must be true to use oauth
+            configurations.blobEndpoint);
+        syslog(LOG_DEBUG, "Before calling blob client");
+        std::shared_ptr<blob_client> blobClient;
+        if (configurations.caCertFile.empty())
+        {
+            blobClient = std::make_shared<blob_client>(
+                account,
+                configurations.concurrency);
+        }
+        else
+        {
+            blobClient = std::make_shared<blob_client>(
+                account,
+                configurations.concurrency,
+                configurations.caCertFile,
+                configurations.httpsProxy);
+        }
+        errno = 0;
+        return std::make_shared<blob_client_wrapper>(blobClient);
+    }
+    catch (const std::exception& ex)
+    {
+        syslog(LOG_ERR, "Failed to create blob client.  ex.what() = %s. Please check your account name and ", ex.what());
+        errno = blobfuse_constants::unknown_error;
+        return std::make_shared<blob_client_wrapper>(false);
+    }
+
 }
 
 ///<summary>

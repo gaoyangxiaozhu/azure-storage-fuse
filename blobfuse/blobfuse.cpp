@@ -165,7 +165,7 @@ int read_config_env()
 
         if(env_aad_endpoint)
         {
-            config_options.aadEndpoint = env_aad_endpoint;
+            config_options.aadEndpoint = env_auth_type;
         }
 
         if(env_blob_endpoint) {
@@ -292,6 +292,24 @@ int read_config(const std::string configFile)
             config_options.httpProxy = httpProxyStr;
             syslog(LOG_DEBUG, "Http Proxy server %s will be used to connect to storage account", config_options.httpsProxy.c_str());
         }
+        else if(line.find("linkedService") != std::string::npos)
+        {
+            syslog(LOG_DEBUG, "LinkedService found");
+            std::string linkedServiceStr(value);
+            config_options.linkedService = linkedServiceStr;
+        }
+        else if(line.find("tokenServiceUrl") != std::string::npos)
+        {
+            syslog(LOG_DEBUG, "TokenServiceUrl found");
+            std::string tokenServiceUrlStr(value);
+            config_options.tokenServiceUrl = tokenServiceUrlStr;
+        }
+        else if(line.find("jobSessionToken") != std::string::npos)
+        {
+            syslog(LOG_DEBUG, "jobSessionToken found");
+            std::string jobSessionTokenStr(value);
+            config_options.jobSessionToken = jobSessionTokenStr;
+        }
         else if(line.find("authType") != std::string::npos)
         {
             config_options.authType = get_auth_type(value);
@@ -319,6 +337,7 @@ int read_config(const std::string configFile)
         }
         else if(line.find("aadEndpoint") != std::string::npos)
         {
+            std::cout << line.find("aadEndpoint");
             std::string altAADEndpointStr(value);
             config_options.aadEndpoint = altAADEndpointStr;
         }
@@ -1228,8 +1247,6 @@ read_and_set_arguments(int argc, char *argv[], struct fuse_args *args)
             config_options.maxBlocksPerFile, config_options.blockSize);
     }
 
-    
-    syslog(LOG_INFO,"Blobfuse version : %s", _BLOBFUSE_VERSION_);
     return 0;
 }
 

@@ -8,6 +8,7 @@
 #include <json.hpp>
 #include <iomanip>
 #include "OAuthToken.h"
+#include "TokenServiceResponse.h"
 #include "constants.h"
 #include "utility.h"
 #include <syslog.h>
@@ -634,4 +635,89 @@ std::function<OAuthToken(std::shared_ptr<CurlEasyClient>)> SetUpSPNCallback(std:
         return parsed_token;
     };
 }
-    
+ 
+std::function<OAuthToken(std::shared_ptr<CurlEasyClient>)> SetUpTokenServiceCallback(std::string job_session_p, std::string linked_service_p, std::string ts_endpoint_p)
+{
+    // Step 1: Construct the URL
+    std::shared_ptr<azure::storage_lite::storage_url> uri_token_request_url = std::make_shared<azure::storage_lite::storage_url>();
+  
+    uri_token_request_url = parse_url(ts_endpoint_p);
+
+    // Step 2: Construct the body query
+    std::string request_body("{\"jobSessionToken\":\"" + job_session_p + "\",");
+    request_body.append("\"resource\":\"{\\\"audience:\\\":\\\"" + linked_service_p + "\\\"}\"}");
+
+    syslog(LOG_DEBUG, "token service resolved linked service request url = %s", uri_token_request_url->to_string().c_str());
+
+    return [uri_token_request_url, request_body](std::shared_ptr<CurlEasyClient> http_client) {
+        std::shared_ptr<CurlEasyRequest> request_handle = http_client->get_handle();
+
+        // set up URI and headers
+        request_handle->set_url(uri_token_request_url->to_string());
+        request_handle->add_header("Content-Type", "application/json;charset=utf-8");
+
+        // Set up token service request body
+        auto body = std::make_shared<std::stringstream>(request_body);
+        request_handle->set_input_stream(storage_istream(body));
+
+        // Set up output stream
+        storage_iostream ios = storage_iostream::create_storage_stream();
+        request_handle->set_output_stream(ios.ostream());
+
+        // Set request method
+        request_handle->set_method(http_base::http_method::post);
+
+        std::chrono::seconds retry_interval(blobfuse_constants::max_retry_oauth);
+        OAuthToken parsed_token;
+
+        request_handle->submit([&parsed_token, &ios](http_base::http_code http_code_result, const storage_istream&, CURLcode curl_code) {
+            if (curl_code != CURLE_OK || unsuccessful(http_code_result)) {
+                std::string req_result;
+
+                try {
+                    std::string json_request_result(std::istreambuf_iterator<char>(ios.istream()),
+                        std::istreambuf_iterator<char>());
+                    req_result = json_request_result;
+                }
+                catch (std::exception& ex)
+                {
+                    syslog(LOG_WARNING, "Exception while extracting the AAD auth unsuccessful http_code %s", ex.what());
+                }
+
+                std::ostringstream errStream;
+                errStream << "Failed to retrieve OAuth Token (CURLCode: " << curl_code << ", HTTP code: " << http_code_result << "): " << req_result;
+                throw std::runtime_error(errStream.str());
+            }
+            else {
+                std::string json_request_result(std::istreambuf_iterator<char>(ios.istream()),
+                    std::istreambuf_iterator<char>());
+
+                try {
+                    json jresult;
+                    TokenServiceResponseData tsResponseData;
+                    jresult = json::parse(json_request_result);
+
+                    if (std::string(jresult["result"]) == std::string("Success")) {
+                        json jtoken;
+                        from_json(jresult["data"], tsResponseData);
+                        ts_data_to_json(jtoken, tsResponseData);
+                        parsed_token = jtoken.get<OAuthToken>();
+                    } 
+                    else
+                    {
+                        std::string errMsg = std::string(jresult["errorMessage"]);
+                        std::string errId = std::string(jresult["errorId"]);
+                        std::ostringstream errStream;
+                        errStream << "Failed to retrieve OAuth Token with errorId: " << errId << ", errorMessage: " << errMsg;
+                        throw std::runtime_error(errStream.str());
+                    }
+                }
+                catch (std::exception& ex) {
+                    throw std::runtime_error(std::string("Failed to parse OAuth token: ") + std::string(ex.what()));
+                }
+            }
+            }, retry_interval);
+
+        return parsed_token;
+    };
+}

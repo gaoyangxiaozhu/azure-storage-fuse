@@ -129,6 +129,11 @@ protected:
     /// Helper function - Authenticates with spn
     ///</summary>
     std::shared_ptr<blob_client_wrapper> authenticate_blob_spn();
+    /// <summary>
+    /// Helper function - Autheticates with AAD
+    /// </summary>
+    /// <returns></returns>
+    std::shared_ptr<blob_client_wrapper> autheticate_blob_aad();
 private:
     ///<summary>
     /// Helper function - Renames single file

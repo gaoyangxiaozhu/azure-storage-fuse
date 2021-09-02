@@ -61,7 +61,10 @@ AUTH_TYPE get_auth_type(std::string authStr)
             }
             else if (lcAuthType.find("spn") != std::string::npos) {
                     return SPN_AUTH;
-            } 
+            }
+            else if (lcAuthType.find("aad") != std::string::npos) {
+                return AAD_AUTH;
+            }
         }       
     } else {
         if (!config_options.objectId.empty() ||

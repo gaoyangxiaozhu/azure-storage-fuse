@@ -30,6 +30,7 @@ set (BLOBFUSE_HEADER
 
   blobfuse/include/OAuthToken.h
   blobfuse/include/OAuthTokenCredentialManager.h
+  blobfuse/include/TokenServiceResponse.h
 )
 
 set (BLOBFUSE_SOURCE
@@ -53,6 +54,7 @@ set (BLOBFUSE_SOURCE
 
   blobfuse/src/OAuthToken.cpp
   blobfuse/src/OAuthTokenCredentialManager.cpp
+  blobfuse/src/TokenServiceResponse.cpp
 
   blobfuse/fileapis.cpp
   blobfuse/directoryapis.cpp
