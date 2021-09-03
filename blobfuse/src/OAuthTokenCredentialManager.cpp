@@ -645,8 +645,9 @@ std::function<OAuthToken(std::shared_ptr<CurlEasyClient>)> SetUpTokenServiceCall
 
     // Step 2: Construct the body query
     std::string request_body("{\"jobSessionToken\":\"" + job_session_p + "\",");
-    request_body.append("\"resource\":\"{\\\"audience:\\\":\\\"" + linked_service_p + "\\\"}\"}");
+    request_body.append("\"resource\":\"{\\\"audience\\\":\\\"" + linked_service_p + "\\\"}\"}");
 
+    syslog(LOG_DEBUG, "requese_body %s", request_body.c_str());
     syslog(LOG_DEBUG, "token service resolved linked service request url = %s", uri_token_request_url->to_string().c_str());
 
     return [uri_token_request_url, request_body](std::shared_ptr<CurlEasyClient> http_client) {
@@ -659,6 +660,8 @@ std::function<OAuthToken(std::shared_ptr<CurlEasyClient>)> SetUpTokenServiceCall
         // Set up token service request body
         auto body = std::make_shared<std::stringstream>(request_body);
         request_handle->set_input_stream(storage_istream(body));
+        request_handle->set_input_content_length(request_body.length());
+        request_handle->add_header("Content-Length", std::to_string(request_body.length()));
 
         // Set up output stream
         storage_iostream ios = storage_iostream::create_storage_stream();

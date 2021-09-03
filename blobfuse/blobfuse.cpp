@@ -294,8 +294,8 @@ int read_config(const std::string configFile)
         }
         else if(line.find("linkedService") != std::string::npos)
         {
-            syslog(LOG_DEBUG, "LinkedService found");
             std::string linkedServiceStr(value);
+            syslog(LOG_DEBUG, "LinkedService found %s", linkedServiceStr.c_str());
             config_options.linkedService = linkedServiceStr;
         }
         else if(line.find("tokenServiceUrl") != std::string::npos)
