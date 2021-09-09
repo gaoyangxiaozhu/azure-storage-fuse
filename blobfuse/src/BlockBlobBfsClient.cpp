@@ -142,7 +142,7 @@ std::shared_ptr<blob_client_wrapper> BlockBlobBfsClient::authenticate_blob_sas()
         {
             syslog(LOG_INFO, "Try to get sas token via linked service.");
             std::string sasToken = autheticate_blob_sas_with_linked_service();
-            cred = std::make_shared<shared_access_signature_credential>(configurations.sasToken);
+            cred = std::make_shared<shared_access_signature_credential>(sasToken);
         }
         else
         {
