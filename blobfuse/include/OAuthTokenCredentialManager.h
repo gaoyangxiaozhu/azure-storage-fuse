@@ -60,6 +60,13 @@ private:
 
 };
 
+/// <summary>
+/// Help function to parse url
+/// </summary>
+/// <param name="url">url</param>
+/// <returns></returns>
+std::shared_ptr<storage_url> parse_url(const std::string& url);
+
 // This is meant to be the singleton instance of OAuthTokenManager, and should not be instantiated more than once.
 static std::shared_ptr<OAuthTokenCredentialManager> TokenManagerSingleton;
 

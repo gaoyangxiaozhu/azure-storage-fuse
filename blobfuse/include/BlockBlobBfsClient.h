@@ -121,6 +121,11 @@ protected:
     /// Helper function - Authenticates with an account sas
     ///</summary>
     std::shared_ptr<blob_client_wrapper> authenticate_blob_sas();
+    /// <summary>
+    /// Helper function - Get one valid account sas via linked_service
+    /// </summary>
+    /// <returns></returns>
+    std::string autheticate_blob_sas_with_linked_service();
     ///<summary>
     /// Helper function - Authenticates with msi
     ///</summary>

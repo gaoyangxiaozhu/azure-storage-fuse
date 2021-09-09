@@ -276,6 +276,7 @@ public:
         mAttrCacheMutex(),
         mAttrCacheMap() 
         {
+            httpClient = std::make_shared<CurlEasyClient>(blobfuse_constants::max_concurrency_oauth);
             if (opt.useAttrCache)
                 mUseCache = true;
         }
@@ -378,6 +379,7 @@ public:
     virtual void InvalidateDir(const std::string dir) = 0;
 protected:
     configParams configurations;
+    std::shared_ptr<CurlEasyClient> httpClient;
     ///<summary>
     /// Helper function - To map errno
     ///</summary>

@@ -1,5 +1,6 @@
 #include <sys/stat.h>
 #include <BlockBlobBfsClient.h>
+#include "TokenServiceResponse.h"
 
 ///<summary>
 /// Authenticates the storage account and container
@@ -129,13 +130,23 @@ std::shared_ptr<blob_client_wrapper> BlockBlobBfsClient::authenticate_blob_sas()
     try
     {
         std::shared_ptr<storage_credential> cred;
-        if (configurations.sasToken.length() > 0)
+        
+        if (configurations.sasToken.length() > 0 && configurations.sasToken != "empty")
         {
+            syslog(LOG_INFO, "using sas token from configuration file.");
+            cred = std::make_shared<shared_access_signature_credential>(configurations.sasToken);
+        }
+        else if (configurations.jobSessionToken.length() > 0
+            && configurations.tokenServiceUrl.length() > 0
+            && configurations.linkedService.length() > 0)
+        {
+            syslog(LOG_INFO, "Try to get sas token via linked service.");
+            std::string sasToken = autheticate_blob_sas_with_linked_service();
             cred = std::make_shared<shared_access_signature_credential>(configurations.sasToken);
         }
         else
         {
-            syslog(LOG_ERR, "Empty account key. Failed to create blob client.");
+            syslog(LOG_ERR, "Empty sas token. Failed to create blob client.");
             return std::make_shared<blob_client_wrapper>(false);
         }
         std::shared_ptr<storage_account> account = std::make_shared<storage_account>(
@@ -166,6 +177,91 @@ std::shared_ptr<blob_client_wrapper> BlockBlobBfsClient::authenticate_blob_sas()
         errno = blobfuse_constants::unknown_error;
         return std::make_shared<blob_client_wrapper>(false);
     }
+}
+std::string BlockBlobBfsClient::autheticate_blob_sas_with_linked_service()
+{
+    syslog(LOG_DEBUG, "Autheticating using SAS with linked service resolve.");
+    // Step 1: Construct the URL
+    std::shared_ptr<azure::storage_lite::storage_url> uri_token_request_url = std::make_shared<azure::storage_lite::storage_url>();
+
+    uri_token_request_url = parse_url(configurations.tokenServiceUrl);
+
+    // Step 2: Construct the body query
+    std::string request_body("{\"jobSessionToken\":\"" + configurations.jobSessionToken + "\",");
+    request_body.append("\"resource\":\"{\\\"audience\\\":\\\"" + configurations.linkedService + "\\\"}\"}");
+
+    syslog(LOG_DEBUG, "requese_body %s", request_body.c_str());
+    syslog(LOG_DEBUG, "token service resolved linked service request url = %s", uri_token_request_url->to_string().c_str());
+    std::shared_ptr<CurlEasyRequest> request_handle = httpClient->get_handle();
+
+    // set up URI and headers
+    request_handle->set_url(uri_token_request_url->to_string());
+    request_handle->add_header("Content-Type", "application/json;charset=utf-8");
+
+    // Set up token service request body
+    auto body = std::make_shared<std::stringstream>(request_body);
+    request_handle->set_input_stream(storage_istream(body));
+    request_handle->set_input_content_length(request_body.length());
+    request_handle->add_header("Content-Length", std::to_string(request_body.length()));
+
+    // Set up output stream
+    storage_iostream ios = storage_iostream::create_storage_stream();
+    request_handle->set_output_stream(ios.ostream());
+
+    // Set request method
+    request_handle->set_method(http_base::http_method::post);
+
+    std::chrono::seconds retry_interval(blobfuse_constants::max_retry_oauth);
+    std::string sas_token = "";
+
+    request_handle->submit([&sas_token, &ios](http_base::http_code http_code_result, const storage_istream&, CURLcode curl_code) {
+        if (curl_code != CURLE_OK || unsuccessful(http_code_result)) {
+            std::string req_result;
+
+            try {
+                std::string json_request_result(std::istreambuf_iterator<char>(ios.istream()),
+                    std::istreambuf_iterator<char>());
+                req_result = json_request_result;
+            }
+            catch (std::exception& ex)
+            {
+                syslog(LOG_WARNING, "Exception while extracting the SAS auth unsuccessful http_code %s", ex.what());
+            }
+
+            std::ostringstream errStream;
+            errStream << "Failed to retrieve SAS Token (CURLCode: " << curl_code << ", HTTP code: " << http_code_result << "): " << req_result;
+            throw std::runtime_error(errStream.str());
+        }
+        else {
+            std::string json_request_result(std::istreambuf_iterator<char>(ios.istream()),
+                std::istreambuf_iterator<char>());
+
+            try {
+                json jresult;
+                TokenServiceResponseData tsResponseData;
+                jresult = json::parse(json_request_result);
+
+                if (std::string(jresult["result"]) == std::string("Success")) {
+                    from_json(jresult["data"], tsResponseData);
+                    sas_token = tsResponseData.token.substr(1);
+                    syslog(LOG_INFO, "Get SAS Token from linked service successfully.");
+                }
+                else
+                {
+                    std::string errMsg = std::string(jresult["errorMessage"]);
+                    std::string errId = std::string(jresult["errorId"]);
+                    std::ostringstream errStream;
+                    errStream << "Failed to retrieve SAS Token with errorId: " << errId << ", errorMessage: " << errMsg;
+                    throw std::runtime_error(errStream.str());
+                }
+            }
+            catch (std::exception& ex) {
+                throw std::runtime_error(std::string("Failed to parse SAS token: ") + std::string(ex.what()));
+            }
+        }
+        }, retry_interval);
+
+    return sas_token;
 }
 std::shared_ptr<blob_client_wrapper> BlockBlobBfsClient::authenticate_blob_msi()
 {
