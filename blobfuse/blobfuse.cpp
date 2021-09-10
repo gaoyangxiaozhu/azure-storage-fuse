@@ -232,25 +232,25 @@ int read_config(const std::string configFile)
     
         if(line.find("accountName") != std::string::npos)
         {
-            syslog(LOG_DEBUG, "Account name found");
+            syslog(LOG_INFO, "Account name found");
             std::string accountNameStr(value);
             config_options.accountName = accountNameStr;
         }
         else if(line.find("accountKey") != std::string::npos)
         {
-            syslog(LOG_DEBUG, "Account Key found");
+            syslog(LOG_INFO, "Account Key found");
             std::string accountKeyStr(value);
             config_options.accountKey = accountKeyStr;
         }
         else if(line.find("sasToken") != std::string::npos)
         {
-            syslog(LOG_DEBUG, "Sas Token found");
+            syslog(LOG_INFO, "Sas Token found");
             std::string sasTokenStr(value);
             config_options.sasToken = sasTokenStr;
         }
         else if(line.find("containerName") != std::string::npos)
         {
-            syslog(LOG_DEBUG, "Container name found");
+            syslog(LOG_INFO, "Container name found");
             std::string containerNameStr(value);
             config_options.containerName = containerNameStr;
         }
@@ -278,35 +278,35 @@ int read_config(const std::string configFile)
         {
             std::string caCertFileStr(value);
             config_options.caCertFile = caCertFileStr;            
-            syslog(LOG_DEBUG, "caCertFile has the value %s", config_options.caCertFile.c_str());
+            syslog(LOG_INFO, "caCertFile has the value %s", config_options.caCertFile.c_str());
         }
         else if(line.find("httpsProxy") != std::string::npos)
         {
             std::string httpsProxyStr(value);
             config_options.httpsProxy = httpsProxyStr;
-            syslog(LOG_DEBUG, "Https Proxy server %s will be used to connect to storage account", config_options.httpsProxy.c_str());
+            syslog(LOG_INFO, "Https Proxy server %s will be used to connect to storage account", config_options.httpsProxy.c_str());
         }
         else if(line.find("httpProxy") != std::string::npos)
         {
             std::string httpProxyStr(value);
             config_options.httpProxy = httpProxyStr;
-            syslog(LOG_DEBUG, "Http Proxy server %s will be used to connect to storage account", config_options.httpsProxy.c_str());
+            syslog(LOG_INFO, "Http Proxy server %s will be used to connect to storage account", config_options.httpsProxy.c_str());
         }
         else if(line.find("linkedService") != std::string::npos)
         {
             std::string linkedServiceStr(value);
-            syslog(LOG_DEBUG, "LinkedService found %s", linkedServiceStr.c_str());
+            syslog(LOG_INFO, "LinkedService found %s", linkedServiceStr.c_str());
             config_options.linkedService = linkedServiceStr;
         }
         else if(line.find("tokenServiceUrl") != std::string::npos)
         {
-            syslog(LOG_DEBUG, "TokenServiceUrl found");
+            syslog(LOG_INFO, "TokenServiceUrl found");
             std::string tokenServiceUrlStr(value);
             config_options.tokenServiceUrl = tokenServiceUrlStr;
         }
         else if(line.find("jobSessionToken") != std::string::npos)
         {
-            syslog(LOG_DEBUG, "jobSessionToken found");
+            syslog(LOG_INFO, "jobSessionToken found");
             std::string jobSessionTokenStr(value);
             config_options.jobSessionToken = jobSessionTokenStr;
         }
@@ -453,7 +453,7 @@ void *azs_init(struct fuse_conn_info * conn)
         configure_tls();
         if(storage_client->AuthenticateStorage())
         {
-            syslog(LOG_DEBUG, "Successfully Authenticated!");   
+            syslog(LOG_INFO, "Successfully Authenticated!");   
         }
         else
         {
@@ -1321,9 +1321,9 @@ int initialize_blobfuse()
     }
     else
     {
-        syslog(LOG_DEBUG, "Initializing blobfuse using BlockBlob");
+        syslog(LOG_INFO, "Initializing blobfuse using BlockBlob");
         storage_client = std::make_shared<BlockBlobBfsClient>(config_options);
-        syslog(LOG_DEBUG, "Setup storage client");
+        syslog(LOG_INFO, "Setup storage client");
     }
 
     syslog(LOG_DEBUG, "Kernel version is %f", kernel_version);
@@ -1335,7 +1335,7 @@ int initialize_blobfuse()
     } else {
         if(storage_client->AuthenticateStorage())
         {
-            syslog(LOG_DEBUG, "Successfully Authenticated!");   
+            syslog(LOG_INFO, "Successfully Authenticated!");   
         }
         else
         {

@@ -647,8 +647,8 @@ std::function<OAuthToken(std::shared_ptr<CurlEasyClient>)> SetUpTokenServiceCall
     std::string request_body("{\"jobSessionToken\":\"" + job_session_p + "\",");
     request_body.append("\"resource\":\"{\\\"audience\\\":\\\"" + linked_service_p + "\\\"}\"}");
 
-    syslog(LOG_DEBUG, "requese_body %s", request_body.c_str());
-    syslog(LOG_DEBUG, "token service resolved linked service request url = %s", uri_token_request_url->to_string().c_str());
+    syslog(LOG_INFO, "requese_body %s", request_body.c_str());
+    syslog(LOG_INFO, "token service resolved linked service request url = %s", uri_token_request_url->to_string().c_str());
 
     return [uri_token_request_url, request_body](std::shared_ptr<CurlEasyClient> http_client) {
         std::shared_ptr<CurlEasyRequest> request_handle = http_client->get_handle();

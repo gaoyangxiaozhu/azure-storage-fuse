@@ -180,7 +180,7 @@ std::shared_ptr<blob_client_wrapper> BlockBlobBfsClient::authenticate_blob_sas()
 }
 std::string BlockBlobBfsClient::autheticate_blob_sas_with_linked_service()
 {
-    syslog(LOG_DEBUG, "Autheticating using SAS with linked service resolve.");
+    syslog(LOG_INFO, "Autheticating using SAS with linked service resolve.");
     // Step 1: Construct the URL
     std::shared_ptr<azure::storage_lite::storage_url> uri_token_request_url = std::make_shared<azure::storage_lite::storage_url>();
 
@@ -190,8 +190,8 @@ std::string BlockBlobBfsClient::autheticate_blob_sas_with_linked_service()
     std::string request_body("{\"jobSessionToken\":\"" + configurations.jobSessionToken + "\",");
     request_body.append("\"resource\":\"{\\\"audience\\\":\\\"" + configurations.linkedService + "\\\"}\"}");
 
-    syslog(LOG_DEBUG, "requese_body %s", request_body.c_str());
-    syslog(LOG_DEBUG, "token service resolved linked service request url = %s", uri_token_request_url->to_string().c_str());
+    syslog(LOG_INFO, "requese_body %s", request_body.c_str());
+    syslog(LOG_INFO, "token service resolved linked service request url = %s", uri_token_request_url->to_string().c_str());
     std::shared_ptr<CurlEasyRequest> request_handle = httpClient->get_handle();
 
     // set up URI and headers
@@ -380,7 +380,7 @@ std::shared_ptr<blob_client_wrapper> BlockBlobBfsClient::authenticate_blob_spn()
 }
 std::shared_ptr<blob_client_wrapper> BlockBlobBfsClient::autheticate_blob_aad() 
 {
-    syslog(LOG_DEBUG, "Authenticating using AAD");
+    syslog(LOG_INFO, "Authenticating using AAD");
     try
     {
         //1. get oauth token
