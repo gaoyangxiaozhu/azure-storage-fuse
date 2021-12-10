@@ -42,6 +42,7 @@ struct configParams
     std::string linkedService;
     std::string tokenServiceUrl;
     std::string jobSessionToken;
+    std::string folder;
     std::string identityClientId;
     std::string spnClientId;
     std::string spnClientSecret;

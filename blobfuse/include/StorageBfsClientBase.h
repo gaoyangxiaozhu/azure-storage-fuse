@@ -280,6 +280,13 @@ public:
             if (opt.useAttrCache)
                 mUseCache = true;
         }
+
+    void appendPrefixFolderPathIfHave(std::string &path)
+    {
+        if (configurations.folder.length() != 0) {
+            path = configurations.folder.append("/").append(path);
+        }
+    }
     virtual bool isADLS() = 0;
     
     ///<summary>

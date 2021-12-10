@@ -525,12 +525,12 @@ bool BlockBlobBfsClient::CreateDirectory(const std::string directoryPath)
 /// Deletes a Directory
 ///</summary>
 ///<returns>none</returns>
-bool BlockBlobBfsClient::DeleteDirectory(const std::string directoryPath)
+bool BlockBlobBfsClient::DeleteDirectory(std::string directoryPath)
 {
     // There's no such thing as a "blob directory". When a directory is created through blobfuse or another process
     // it makes an empty blob marker that represents a directory through a empty blob marker and metadata set to
     // "hdi_isfolder"
-
+    appendPrefixFolderPathIfHave(directoryPath);
     errno = 0;
     D_RETURN_CODE dir_blob_exists = IsDirectoryEmpty(directoryPath);
 
@@ -582,8 +582,9 @@ bool BlockBlobBfsClient::DeleteDirectory(const std::string directoryPath)
 /// Deletes a File
 ///</summary>
 ///<returns>none</returns>
-void BlockBlobBfsClient::DeleteFile(const std::string pathToDelete)
+void BlockBlobBfsClient::DeleteFile(std::string pathToDelete)
 {
+    appendPrefixFolderPathIfHave(pathToDelete);
     m_blob_client->delete_blob(configurations.containerName, pathToDelete);
 }
 ///<summary>
@@ -592,6 +593,7 @@ void BlockBlobBfsClient::DeleteFile(const std::string pathToDelete)
 ///<returns>BfsFileProperty object which contains the property details of the file</returns>
 BfsFileProperty BlockBlobBfsClient::GetProperties(std::string pathName, bool type_known)
 {
+    appendPrefixFolderPathIfHave(pathName);
     errno = 0;
     if (type_known) {
         blob_property property = m_blob_client->get_blob_property(configurations.containerName, pathName);
@@ -712,8 +714,9 @@ BfsFileProperty BlockBlobBfsClient::GetProperties(std::string pathName, bool typ
 /// Determines whether or not a path (file or directory) exists or not
 ///</summary>
 ///<returns>none</returns>
-int BlockBlobBfsClient::Exists(const std::string pathName)
+int BlockBlobBfsClient::Exists(std::string pathName)
 {
+    appendPrefixFolderPathIfHave(pathName);
     errno = 0;
     blob_property property = m_blob_client->get_blob_property(configurations.containerName, pathName);
 
@@ -734,8 +737,10 @@ int BlockBlobBfsClient::Exists(const std::string pathName)
 /// Determines whether or not a path (file or directory) exists or not
 ///</summary>
 ///<returns>none</returns>
-bool BlockBlobBfsClient::Copy(const std::string sourcePath, const std::string destinationPath)
+bool BlockBlobBfsClient::Copy(std::string sourcePath, std::string destinationPath)
 {
+    appendPrefixFolderPathIfHave(sourcePath);
+    appendPrefixFolderPathIfHave(destinationPath);
     m_blob_client->start_copy(configurations.containerName, sourcePath, configurations.containerName, destinationPath);
     return true;
 }
@@ -743,8 +748,10 @@ bool BlockBlobBfsClient::Copy(const std::string sourcePath, const std::string de
 /// Renames a file
 ///</summary>
 ///<returns>List of files in the cache to remove</returns>
-std::vector<std::string> BlockBlobBfsClient::Rename(const std::string sourcePath, const std::string destinationPath)
+std::vector<std::string> BlockBlobBfsClient::Rename(std::string sourcePath, std::string destinationPath)
 {
+    appendPrefixFolderPathIfHave(sourcePath);
+    appendPrefixFolderPathIfHave(destinationPath);
     // Rename the directory blob, if it exists.
     errno = 0;
     BfsFileProperty property = GetProperties(sourcePath.substr(1));
@@ -760,8 +767,10 @@ std::vector<std::string> BlockBlobBfsClient::Rename(const std::string sourcePath
     return file_paths_to_remove;
 }
 
-std::vector<std::string> BlockBlobBfsClient::Rename(const std::string sourcePath,const  std::string destinationPath, bool isDir)
+std::vector<std::string> BlockBlobBfsClient::Rename(std::string sourcePath, std::string destinationPath, bool isDir)
 {
+    appendPrefixFolderPathIfHave(sourcePath);
+    appendPrefixFolderPathIfHave(destinationPath);
     std::vector<std::string> file_paths_to_remove;
     if (isDir) {
         rename_directory(sourcePath.c_str(), destinationPath.c_str(), file_paths_to_remove);
@@ -776,8 +785,9 @@ std::vector<std::string> BlockBlobBfsClient::Rename(const std::string sourcePath
 ///</summary>
 ///<returns>none</returns>
 int
-BlockBlobBfsClient::List(std::string continuation, const std::string prefix, const std::string delimiter, list_segmented_response &resp, int max_results)
+BlockBlobBfsClient::List(std::string continuation, std::string prefix, const std::string delimiter, list_segmented_response &resp, int max_results)
 {
+    appendPrefixFolderPathIfHave(prefix);
     //TODO: MAKE THIS BETTER
     list_blobs_segmented_response listed_blob_response = m_blob_client->list_blobs_segmented(
         configurations.containerName,
@@ -801,7 +811,9 @@ BlockBlobBfsClient::List(std::string continuation, const std::string prefix, con
 ///<returns>none</returns>
 bool BlockBlobBfsClient::IsDirectory(const char *path)
 {
-    BfsFileProperty property = GetProperties(path);
+    std::string pathStr = std::string(path);
+    appendPrefixFolderPathIfHave(pathStr);
+    BfsFileProperty property = GetProperties(pathStr);
     if (property.isValid() && property.exists() && property.is_directory)
         return true;
     else
@@ -817,6 +829,7 @@ bool BlockBlobBfsClient::IsDirectory(const char *path)
  */
 D_RETURN_CODE BlockBlobBfsClient::IsDirectoryEmpty(std::string path)
 {
+    appendPrefixFolderPathIfHave(path);
     std::string delimiter = "/";
     path.append(delimiter);
     std::string continuation;
@@ -874,6 +887,8 @@ D_RETURN_CODE BlockBlobBfsClient::IsDirectoryEmpty(std::string path)
 
 int BlockBlobBfsClient::rename_single_file(std::string src, std::string dst, std::vector<std::string> &files_to_remove_cache)
 {
+    appendPrefixFolderPathIfHave(src);
+    appendPrefixFolderPathIfHave(dst);
     // TODO: if src == dst, return?
     // TODO: lock in alphabetical order?
     auto fsrcmutex = file_lock_map::get_instance()->get_mutex(src);
@@ -973,6 +988,8 @@ int BlockBlobBfsClient::rename_single_file(std::string src, std::string dst, std
 
 int BlockBlobBfsClient::rename_directory(std::string src, std::string dst, std::vector<std::string> &files_to_remove_cache)
 {
+    appendPrefixFolderPathIfHave(src);
+    appendPrefixFolderPathIfHave(dst);
     AZS_DEBUGLOGV("azs_rename_directory called with src = %s, dst = %s.\n", src.c_str(), dst.c_str());
     std::string srcPathStr(src);
     // Rename the directory blob, if it exists.
@@ -1120,7 +1137,6 @@ int BlockBlobBfsClient::ListAllItemsSegmented(
     uint total_count = 0;
     uint iteration = 0;
     list_segmented_response response;
-
     results.reserve(200);
     do
     {

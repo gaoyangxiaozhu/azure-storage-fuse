@@ -310,6 +310,12 @@ int read_config(const std::string configFile)
             std::string jobSessionTokenStr(value);
             config_options.jobSessionToken = jobSessionTokenStr;
         }
+        else if (line.find("folder") != std::string::npos)
+        {
+            syslog(LOG_INFO, "folder found");
+            std::string folder(value);
+            config_options.folder = folder;
+        }
         else if(line.find("authType") != std::string::npos)
         {
             config_options.authType = get_auth_type(value);
