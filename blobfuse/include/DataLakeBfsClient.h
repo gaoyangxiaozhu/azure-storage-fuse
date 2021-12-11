@@ -77,6 +77,11 @@ private:
     /// Helper function - Authenticates with an account sas
     ///</summary>
     std::shared_ptr<adls_client_ext> authenticate_adls_sas();
+    /// <summary>
+    /// Helper function - Get one valid account sas via linked_service
+    /// </summary>
+    /// <returns></returns>
+    std::string autheticate_adls_sas_with_linked_service();
     ///<summary>
     /// Helper function - Authenticates with msi
     ///</summary>

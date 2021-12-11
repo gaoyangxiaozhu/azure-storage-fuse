@@ -281,11 +281,29 @@ public:
                 mUseCache = true;
         }
 
-    void appendPrefixFolderPathIfHave(std::string &path)
+    std::string appendPrefixFolderPathIfHave(std::string path)
     {
+        // folder filed will like `synapse/`
         if (configurations.folder.length() != 0) {
-            path = configurations.folder.append("/").append(path);
+            std::string folder = configurations.folder;
+            if (path != "") {
+                if (path.back() == '/') {
+                    if (folder.back() == '/') {
+                        folder = folder.substr(1);
+                    }
+                }
+
+                return folder.append(path);
+            }
+            else {
+                if (folder.back() != '/') {
+                    folder = folder.append("/");
+                }
+                return folder;
+            }
         }
+
+        return path;
     }
     virtual bool isADLS() = 0;
     

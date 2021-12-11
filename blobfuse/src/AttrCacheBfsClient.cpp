@@ -401,8 +401,9 @@ AttrCacheBfsClient::List(std::string continuation, const std::string prefix, con
                     "", 
                     resp.m_items[i].content_length);
 
-            if (resp.m_items[i].name.back() != '/') {
-                std::shared_ptr<AttrCacheItem> cache_item = attr_cache.get_blob_item(resp.m_items[i].name);
+            std::string name = resp.m_items[i].name;
+            if (name.back() != '/') {
+                std::shared_ptr<AttrCacheItem> cache_item = attr_cache.get_blob_item(name);
                 //std::lock_guard<std::mutex> lock(cache_item->m_mutex);
                 cache_item->SetProperties(ret_property);
                 SET_PROP_FLAG(cache_item->flags, PROP_FLAG_CONFIRMED);

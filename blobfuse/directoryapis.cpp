@@ -173,15 +173,16 @@ int azs_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t, stru
                 
                 for (size_t i = ((skip_first) ? 1 : 0); i < response.m_items.size(); i++)
                 {
-                    if (response.m_items[i].name.size() > 0)
+                    std::string name = response.m_items[i].name;
+                    if (name.size() > 0)
                     {
-                        if (response.m_items[i].name.back() == '/')
+                        if (name.back() == '/')
                         {
-                            prev_token_str = response.m_items[i].name.substr(pathStr.size() - 1, response.m_items[i].name.size() - pathStr.size());
+                            prev_token_str = name.substr(pathStr.size() - 1, name.size() - pathStr.size());
                         }
                         else
                         {
-                            prev_token_str = response.m_items[i].name.substr(pathStr.size() - 1);
+                            prev_token_str = name.substr(pathStr.size() - 1);
                         }
 
                         if ((prev_token_str.size() > 0)
@@ -204,7 +205,7 @@ int azs_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t, stru
                                 }
                                 stbuf.st_nlink = 1;
                                 stbuf.st_size = response.m_items[i].content_length;
-                            } else{
+                            } else {
                                 // Blob is Directory
                                 stbuf.st_mode = S_IFDIR | config_options.defaultPermission;
                                 stbuf.st_nlink = 2;

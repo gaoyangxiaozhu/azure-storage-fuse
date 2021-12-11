@@ -165,7 +165,7 @@ int read_config_env()
 
         if(env_aad_endpoint)
         {
-            config_options.aadEndpoint = env_auth_type;
+            config_options.aadEndpoint = env_aad_endpoint;
         }
 
         if(env_blob_endpoint) {

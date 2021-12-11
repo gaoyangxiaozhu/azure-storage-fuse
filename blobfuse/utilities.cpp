@@ -207,10 +207,12 @@ int azs_getattr(const char *path, struct stat *stbuf)
     //AZS_DEBUGLOGV("Storage client name is %s \n", (typeid(storage_client).name()));
     // see if it is block blob and call the block blob method
     //if the first task is to study
+    AZS_DEBUGLOGV("blobNameStr is @ %s", blobNameStr.c_str());
     if (!storage_client->isADLS())
     {
         if (config_options.useAttrCache)
         {
+            AZS_DEBUGLOGV("blobNameStr %s", blobNameStr.c_str());
             // If attr-cache is enable then instead of calling list 
             // get the attributes from cache for file. for dir we will still
             // rely on list apis.

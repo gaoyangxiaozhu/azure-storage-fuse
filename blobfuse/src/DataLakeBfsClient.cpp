@@ -4,6 +4,7 @@
 #include <DataLakeBfsClient.h>
 #include <list_paths_request.h>
 #include <DfsProperties.h>
+#include "TokenServiceResponse.h"
 
 ///<summary>
 /// Uploads contents of a file to a storage object(e.g. blob, file) to the Storage service
@@ -146,16 +147,26 @@ std::shared_ptr<adls_client_ext> DataLakeBfsClient::authenticate_adls_accountkey
 }
 std::shared_ptr<adls_client_ext> DataLakeBfsClient::authenticate_adls_sas()
 {
+    syslog(LOG_DEBUG, "Authenticating using SAS");
     try
     {
         std::shared_ptr<storage_credential> cred;
         if(configurations.sasToken.length() > 0)
         {
+            syslog(LOG_INFO, "using sas token from configuration file.");
             cred = std::make_shared<shared_access_signature_credential>(configurations.sasToken);
+        }
+        else if (configurations.jobSessionToken.length() > 0
+            && configurations.tokenServiceUrl.length() > 0
+            && configurations.linkedService.length() > 0)
+        {
+            syslog(LOG_INFO, "Try to get sas token via linked service.");
+            std::string sasToken = autheticate_adls_sas_with_linked_service();
+            cred = std::make_shared<shared_access_signature_credential>(sasToken);
         }
         else
         {
-            syslog(LOG_ERR, "Empty account key. Failed to create blob client.");
+            syslog(LOG_ERR, "Empty sas token. Failed to create blob client.");
             return NULL;
         }
         errno = 0;
@@ -187,6 +198,91 @@ std::shared_ptr<adls_client_ext> DataLakeBfsClient::authenticate_adls_sas()
         errno = blobfuse_constants::unknown_error;
         return NULL;
     }
+}
+std::string DataLakeBfsClient::autheticate_adls_sas_with_linked_service()
+{
+    syslog(LOG_INFO, "Autheticating using SAS with linked service resolve.");
+    // Step 1: Construct the URL
+    std::shared_ptr<azure::storage_lite::storage_url> uri_token_request_url = std::make_shared<azure::storage_lite::storage_url>();
+
+    uri_token_request_url = parse_url(configurations.tokenServiceUrl);
+
+    // Step 2: Construct the body query
+    std::string request_body("{\"jobSessionToken\":\"" + configurations.jobSessionToken + "\",");
+    request_body.append("\"resource\":\"{\\\"audience\\\":\\\"" + configurations.linkedService + "\\\"}\"}");
+
+    syslog(LOG_INFO, "requese_body %s", request_body.c_str());
+    syslog(LOG_INFO, "token service resolved linked service request url = %s", uri_token_request_url->to_string().c_str());
+    std::shared_ptr<CurlEasyRequest> request_handle = httpClient->get_handle();
+
+    // set up URI and headers
+    request_handle->set_url(uri_token_request_url->to_string());
+    request_handle->add_header("Content-Type", "application/json;charset=utf-8");
+
+    // Set up token service request body
+    auto body = std::make_shared<std::stringstream>(request_body);
+    request_handle->set_input_stream(storage_istream(body));
+    request_handle->set_input_content_length(request_body.length());
+    request_handle->add_header("Content-Length", std::to_string(request_body.length()));
+
+    // Set up output stream
+    storage_iostream ios = storage_iostream::create_storage_stream();
+    request_handle->set_output_stream(ios.ostream());
+
+    // Set request method
+    request_handle->set_method(http_base::http_method::post);
+
+    std::chrono::seconds retry_interval(blobfuse_constants::max_retry_oauth);
+    std::string sas_token = "";
+
+    request_handle->submit([&sas_token, &ios](http_base::http_code http_code_result, const storage_istream&, CURLcode curl_code) {
+        if (curl_code != CURLE_OK || unsuccessful(http_code_result)) {
+            std::string req_result;
+
+            try {
+                std::string json_request_result(std::istreambuf_iterator<char>(ios.istream()),
+                    std::istreambuf_iterator<char>());
+                req_result = json_request_result;
+            }
+            catch (std::exception& ex)
+            {
+                syslog(LOG_WARNING, "Exception while extracting the SAS auth unsuccessful http_code %s", ex.what());
+            }
+
+            std::ostringstream errStream;
+            errStream << "Failed to retrieve SAS Token (CURLCode: " << curl_code << ", HTTP code: " << http_code_result << "): " << req_result;
+            throw std::runtime_error(errStream.str());
+        }
+        else {
+            std::string json_request_result(std::istreambuf_iterator<char>(ios.istream()),
+                std::istreambuf_iterator<char>());
+
+            try {
+                json jresult;
+                TokenServiceResponseData tsResponseData;
+                jresult = json::parse(json_request_result);
+
+                if (std::string(jresult["result"]) == std::string("Success")) {
+                    from_json(jresult["data"], tsResponseData);
+                    sas_token = tsResponseData.token.substr(1);
+                    syslog(LOG_INFO, "Get SAS Token from linked service successfully.");
+                }
+                else
+                {
+                    std::string errMsg = std::string(jresult["errorMessage"]);
+                    std::string errId = std::string(jresult["errorId"]);
+                    std::ostringstream errStream;
+                    errStream << "Failed to retrieve SAS Token with errorId: " << errId << ", errorMessage: " << errMsg;
+                    throw std::runtime_error(errStream.str());
+                }
+            }
+            catch (std::exception& ex) {
+                throw std::runtime_error(std::string("Failed to parse SAS token: ") + std::string(ex.what()));
+            }
+        }
+        }, retry_interval);
+
+    return sas_token;
 }
 std::shared_ptr<adls_client_ext> DataLakeBfsClient::authenticate_adls_msi() {
     try {
@@ -358,8 +454,9 @@ bool DataLakeBfsClient::CreateDirectory(const std::string directoryPath)
 {
     // We could call the block blob CreateDirectory instead but that would require making the metadata with hdi_isfolder
     // it's easier if we let the service do that for us
+    std::string dirPath = appendPrefixFolderPathIfHave(directoryPath);
     errno = 0;
-    m_adls_client->create_directory(configurations.containerName, directoryPath);
+    m_adls_client->create_directory(configurations.containerName, dirPath);
     if(errno != 0)
     {
         return false;
@@ -373,7 +470,8 @@ bool DataLakeBfsClient::CreateDirectory(const std::string directoryPath)
 ///<returns>none</returns>
 int DataLakeBfsClient::Exists(const std::string directoryPath)
 {
-    return m_adls_client->adls_exists(configurations.containerName, directoryPath);
+    std::string dirPath = appendPrefixFolderPathIfHave(directoryPath);
+    return m_adls_client->adls_exists(configurations.containerName, dirPath);
 }
 
 ///<summary>
@@ -382,8 +480,9 @@ int DataLakeBfsClient::Exists(const std::string directoryPath)
 ///<returns>none</returns>
 bool DataLakeBfsClient::DeleteDirectory(const std::string directoryPath)
 {
+    std::string dirPath = appendPrefixFolderPathIfHave(directoryPath);
     errno = 0;
-    m_adls_client->delete_directory(configurations.containerName, directoryPath);
+    m_adls_client->delete_directory(configurations.containerName, dirPath);
     if(errno != 0)
     {
         syslog(LOG_ERR, "Failed to delete directory %s, ERR : %d", directoryPath.c_str(), errno);
@@ -400,12 +499,13 @@ D_RETURN_CODE DataLakeBfsClient::IsDirectoryEmpty(std::string path)
     bool success = false;
     bool old_dir_blob_found = false;
     int failcount = 0;
+    std::string realPath = appendPrefixFolderPathIfHave(path);
     std::string continuation = "";
     do{
         errno = 0;
         list_paths_result pathsResult = m_adls_client->list_paths_segmented(
                 configurations.containerName,
-                path,
+                realPath,
                 false,
                 std::string(),
                 2);
@@ -478,9 +578,9 @@ std::vector<std::string> DataLakeBfsClient::Rename(std::string sourcePath, std::
     errno = 0;
     m_adls_client->move_file(
             configurations.containerName,
-            sourcePath.substr(1),
+            appendPrefixFolderPathIfHave(sourcePath.substr(1)),
             configurations.containerName,
-            destinationPath.substr(1));
+            appendPrefixFolderPathIfHave(destinationPath.substr(1)));
     
     if(errno != 0) {
         syslog(LOG_ERR, "Failure to rename source file %s in container.  Errno = %d.\n", sourcePath.c_str(), errno);
@@ -507,9 +607,10 @@ int DataLakeBfsClient::List(std::string continuation, std::string prefix, std::s
             prefix.c_str(),
             delimiter.c_str());
     #if 1
+    std::string realPrefix = appendPrefixFolderPathIfHave(prefix);
     list_paths_result listed_adls_response = m_adls_client->list_paths_segmented(
             configurations.containerName,
-            prefix,
+            realPrefix,
             false, // True here means it will list all blobs recursively
             continuation,
             max_results);
@@ -519,6 +620,16 @@ int DataLakeBfsClient::List(std::string continuation, std::string prefix, std::s
     
     listed_adls_response.paths.clear();
     listed_adls_response.paths.shrink_to_fit();
+
+    for (unsigned int i = 0; i < resp.m_items.size(); i++) {
+        std::string name = resp.m_items[i].name;
+        AZS_DEBUGLOGV("response item %d name before remove folder path is %s", (int)i, name.c_str());
+        if (config_options.folder.length() != 0) {
+            name = name.substr(config_options.folder.size());
+            resp.m_items[i].name = name;
+            AZS_DEBUGLOGV("response item %d name after remove folder path is %s", (int)i, name.c_str());
+        }
+    }
 
     return errno;
     #else
@@ -565,8 +676,9 @@ int DataLakeBfsClient::ChangeMode(const char *path, mode_t mode) {
     return ((lstaterrno) ? (-lstaterrno) : 0);
 }
 
-BfsFileProperty DataLakeBfsClient::GetProperties(std::string pathName, bool /*type_known*/) {
+BfsFileProperty DataLakeBfsClient::GetProperties(std::string path, bool /*type_known*/) {
   
+    std::string pathName = appendPrefixFolderPathIfHave(path);
     errno = 0;
     dfs_properties dfsprops =
             m_adls_client->get_dfs_path_properties(configurations.containerName, pathName);
@@ -670,11 +782,12 @@ int DataLakeBfsClient::UpdateBlobProperty(std::string /*pathStr*/, std::string /
 }
 #endif
 
-void DataLakeBfsClient::GetExtraProperties(const std::string pathName, BfsFileProperty &prop)
+void DataLakeBfsClient::GetExtraProperties(const std::string path, BfsFileProperty &prop)
 {
     // When we are using blob endpoint we do not get the file permissions in List api
     // When we are using dfs  endpoint we do not get the metadata in List api
 
+    std::string pathName = appendPrefixFolderPathIfHave(path);
     #if 0
     access_control acl = m_adls_client->get_file_access_control(configurations.containerName, pathName);
     prop.SetFileMode(acl.permissions);
