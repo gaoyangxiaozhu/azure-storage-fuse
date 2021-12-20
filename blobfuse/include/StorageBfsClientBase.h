@@ -287,9 +287,9 @@ public:
         if (configurations.folder.length() != 0) {
             std::string folder = configurations.folder;
             if (path != "") {
-                if (path.back() == '/') {
+                if (path.front() == '/') {
                     if (folder.back() == '/') {
-                        folder = folder.substr(1);
+                        folder = folder.substr(0, folder.size() - 1);
                     }
                 }
 

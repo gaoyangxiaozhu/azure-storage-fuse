@@ -151,7 +151,7 @@ std::shared_ptr<adls_client_ext> DataLakeBfsClient::authenticate_adls_sas()
     try
     {
         std::shared_ptr<storage_credential> cred;
-        if(configurations.sasToken.length() > 0)
+        if(configurations.sasToken.length() > 0 && configurations.sasToken != "empty")
         {
             syslog(LOG_INFO, "using sas token from configuration file.");
             cred = std::make_shared<shared_access_signature_credential>(configurations.sasToken);
