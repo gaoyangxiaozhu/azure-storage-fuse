@@ -624,9 +624,9 @@ int DataLakeBfsClient::List(std::string continuation, std::string prefix, std::s
     for (unsigned int i = 0; i < resp.m_items.size(); i++) {
         std::string name = resp.m_items[i].name;
         AZS_DEBUGLOGV("response item %d name before remove folder path is %s", (int)i, name.c_str());
-        if (config_options.folder.length() != 0) {
-            name = name.substr(config_options.folder.size());
-            resp.m_items[i].name = name;
+        if (configurations.folder.length() != 0) {
+            name = name.substr(configurations.folder.size());
+            resp.m_items[i].name = configurations.mntPath.substr(1) + name;
             AZS_DEBUGLOGV("response item %d name after remove folder path is %s", (int)i, name.c_str());
         }
     }
@@ -717,7 +717,7 @@ long int DataLakeBfsClient::rename_cached_file(std::string src, std::string dst,
     if(statret == 0)
     {
         //make sure directory path exists in cache
-        ensure_directory_path_exists_cache(dst.c_str());
+        ensure_directory_path_exists_local(dst.c_str());
 
         int rename_ret = rename(src.c_str(), dst.c_str());
         if(rename_ret < 0)

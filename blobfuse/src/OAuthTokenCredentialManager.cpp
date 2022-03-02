@@ -617,7 +617,7 @@ std::function<OAuthToken(std::shared_ptr<CurlEasyClient>)> SetUpSPNCallback(std:
 
                 std::ostringstream errStream;
                 errStream << "Failed to retrieve OAuth Token (CURLCode: " << curl_code << ", HTTP code: " << http_code_result << "): " << req_result;
-                throw std::runtime_error(errStream.str());
+                 std::runtime_error(errStream.str());
             } else {
                 std::string json_request_result(std::istreambuf_iterator<char>(ios.istream()),
                                                 std::istreambuf_iterator<char>());

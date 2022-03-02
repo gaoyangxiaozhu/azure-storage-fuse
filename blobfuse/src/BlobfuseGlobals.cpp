@@ -78,9 +78,11 @@ AUTH_TYPE get_auth_type(std::string authStr)
         } else if (!config_options.sasToken.empty()) {
             return SAS_AUTH;
         } else if (!config_options.spnClientSecret.empty() && !config_options.spnClientId.empty() && !config_options.spnTenantId.empty()){
+            syslog(LOG_DEBUG, "Auth type set as spn");
             return SPN_AUTH;
         }
     }
+
     return INVALID_AUTH;
 }
 

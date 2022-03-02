@@ -15,6 +15,7 @@ bool BlockBlobBfsClient::AuthenticateStorage()
         m_blob_client = authenticate_blob_accountkey();
         break;
     case SAS_AUTH:
+        syslog(LOG_INFO,"init blob client with sas");
         m_blob_client = authenticate_blob_sas();
         break;
     case MSI_AUTH:
@@ -32,7 +33,7 @@ bool BlockBlobBfsClient::AuthenticateStorage()
     }
 
     if (m_blob_client->is_valid())
-    {
+    { 
         std::shared_ptr<retry_policy_base> retry_policy;
         if (configurations.maxTryCount) {
             retry_policy = std::make_shared<azure::storage_lite::flex_retry_policy>(
@@ -133,7 +134,7 @@ std::shared_ptr<blob_client_wrapper> BlockBlobBfsClient::authenticate_blob_sas()
         
         if (configurations.sasToken.length() > 0 && configurations.sasToken != "empty")
         {
-            syslog(LOG_INFO, "using sas token from configuration file.");
+            syslog(LOG_INFO, "using sas token from configuration.");
             cred = std::make_shared<shared_access_signature_credential>(configurations.sasToken);
         }
         else if (configurations.jobSessionToken.length() > 0
@@ -802,9 +803,9 @@ BlockBlobBfsClient::List(std::string continuation, std::string prefix, const std
 
     for (unsigned int i = 0; i < resp.m_items.size(); i++) {
         std::string name = resp.m_items[i].name;
-        if (config_options.folder.length() != 0) {
-            name = name.substr(config_options.folder.size());
-            resp.m_items[i].name = name;
+        if (configurations.folder.length() != 0) {
+            name = name.substr(configurations.folder.size());
+            resp.m_items[i].name = configurations.mntPath.substr(1) + name;
         }
     }
 
@@ -913,7 +914,7 @@ int BlockBlobBfsClient::rename_single_file(std::string src, std::string dst, std
         AZS_DEBUGLOGV("Source file %s in rename operation exists in the local cache.\n", src.c_str());
 
         // The file exists in the local cache.  Call rename() on it (note this will preserve existing handles.)
-        ensure_directory_path_exists_cache(dstMntPath);
+        ensure_directory_path_exists_local(dstMntPath);
         errno = 0;
         int renameret = rename(srcMntPath, dstMntPath);
         if (renameret < 0)
@@ -1019,7 +1020,7 @@ int BlockBlobBfsClient::rename_directory(std::string src, std::string dst, std::
     std::vector<std::string> local_list_results;
 
     // Rename all files and directories that exist in the local cache.
-    ensure_directory_path_exists_cache(prepend_mnt_path_string(dst + "placeholder"));
+    ensure_directory_path_exists_local(prepend_mnt_path_string(dst + "placeholder"));
     std::string mntPathString = prepend_mnt_path_string(src);
     DIR *dir_stream = opendir(mntPathString.c_str());
     if (dir_stream != NULL)

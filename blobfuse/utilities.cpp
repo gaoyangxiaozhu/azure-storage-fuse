@@ -1,10 +1,11 @@
 #include "blobfuse.h"
+#include <boost/filesystem.hpp>
 #include <FileLockMap.h>
 #include <sys/file.h>
 #include <BlobfuseGlobals.h>
 
-#include <include/StorageBfsClientBase.h>
-extern std::shared_ptr<StorageBfsClientBase> storage_client;
+#include <include/MountEntryResolver.h>
+#include <include/MountsStore.h>
 
 int azs_rename_directory(const char *src, const char *dst);
 
@@ -22,11 +23,17 @@ int map_errno(int error)
     }
 }
 
-std::string prepend_mnt_path_string(const std::string &path)
+std::string prepend_mnt_path_string(const std::string &path, const bool isUnderRoot)
 {
     std::string result;
-    result.reserve(config_options.tmpPath.length() + 5 + path.length());
-    return result.append(config_options.tmpPath).append("/root").append(path);
+    if (isUnderRoot) {
+        result.reserve(config_options.tmpPath.length() + 5 + path.length());
+        return result.append(config_options.tmpPath).append("/root").append(path);
+    }
+    else {
+        result.reserve(config_options.tmpPath.length() + 8 + path.length());
+        return result.append(config_options.tmpPath).append("/default").append(path);
+    }
 }
 
 // Acquire shared lock utility function
@@ -78,7 +85,33 @@ bool is_directory_blob(unsigned long long size, std::vector<std::pair<std::strin
     return false;
 }
 
-int ensure_files_directory_exists_in_cache(const std::string &file_path)
+long int rename_local_file(std::string src, std::string dst)
+{
+    struct stat buf;
+
+    int statret = stat(src.c_str(), &buf);
+    if(statret == 0)
+    {
+        //make sure directory path exists in cache
+        ensure_files_directory_exists_in_local(dst.c_str());
+
+        int rename_ret = rename(src.c_str(), dst.c_str());
+        if(rename_ret < 0)
+        {
+            syslog(LOG_ERR, "Failure to rename source %s in the local. errno = %d\n", src.c_str(), errno);
+            return -errno;
+        }
+        else
+        {
+            AZS_DEBUGLOGV("Successfully to renamed file %s to %s in the local.\n", src.c_str(), dst.c_str());
+        }
+    }
+
+    errno = 0;
+    return 0;
+}
+
+int ensure_files_directory_exists_in_local(const std::string &file_path)
 {
     char *pp;
     char *slash;
@@ -93,7 +126,7 @@ int ensure_files_directory_exists_in_cache(const std::string &file_path)
         if (slash != pp)
         {
             *slash = '\0';
-            AZS_DEBUGLOGV("Making cache directory %s.\n", copypath);
+            AZS_DEBUGLOGV("Making directory %s.\n", copypath);
             struct stat st;
             if (stat(copypath, &st) != 0)
             {
@@ -139,9 +172,24 @@ int azs_getattr(const char *path, struct stat *stbuf)
     // Replace '\' with '/' as for azure storage they will be considered as path seperators
     std::replace(pathString.begin(), pathString.end(), '\\', '/');
 
+    std::shared_ptr<StorageBfsClientBase> storage_client = MountEntryResolver::get_instance()->resolve(pathString);
+    
     std::string mntPathString = prepend_mnt_path_string(pathString);
-
+    errno = 0;
     int res;
+    
+    if (storage_client->isDefault()) {
+        mntPathString = prepend_mnt_path_string(pathString, false);
+        syslog(LOG_INFO, "got default client. %s", mntPathString.c_str());
+        res = lstat(mntPathString.c_str(), stbuf);
+        if (res == -1) {
+            int lstaterrno = errno;
+            syslog(LOG_ERR, "lstat on file %s in local during getattr failed with errno = %d.\n", mntPathString.c_str(), lstaterrno);
+            return -lstaterrno;
+        }
+        return 0;
+    }
+
     int acc = access(mntPathString.c_str(), F_OK);
     if (acc != -1)
     {
@@ -208,6 +256,7 @@ int azs_getattr(const char *path, struct stat *stbuf)
     // see if it is block blob and call the block blob method
     //if the first task is to study
     AZS_DEBUGLOGV("blobNameStr is @ %s", blobNameStr.c_str());
+
     if (!storage_client->isADLS())
     {
         if (config_options.useAttrCache)
@@ -484,10 +533,12 @@ void azs_destroy(void * /*private_data*/)
 {
     AZS_DEBUGLOG("azs_destroy called.\n");
     std::string rootPath(config_options.tmpPath + "/root");
+    std::string defaultPath(config_options.tmpPath + "/default");
 
     errno = 0;
     // FTW_DEPTH instructs FTW to do a post-order traversal (children of a directory before the actual directory.)
     nftw(rootPath.c_str(), rm, 20, FTW_DEPTH);
+    nftw(defaultPath.c_str(), rm, 20, FTW_DEPTH);
 }
 
 // Not yet implemented section:
@@ -498,6 +549,13 @@ int azs_access(const char * /*path*/, int /*mask*/)
 
 int azs_fsync(const char * path, int /*isdatasync*/, struct fuse_file_info *fi)
 {
+    std::string pathString(path);
+    std::replace(pathString.begin(), pathString.end(), '\\', '/');
+    std::shared_ptr<StorageBfsClientBase> storage_client = MountEntryResolver::get_instance()->resolve(pathString);
+    if (storage_client->isDefault()) {
+        return 0;
+    }
+
     if (config_options.invalidateOnSync) {
         syslog(LOG_INFO, "FSYNC : Request for forceful eviction of file : %s", path);
         struct fhwrapper *fhw = ((struct fhwrapper *)fi->fh);
@@ -509,9 +567,16 @@ int azs_fsync(const char * path, int /*isdatasync*/, struct fuse_file_info *fi)
 
 int azs_fsyncdir(const char *path, int, struct fuse_file_info *)
 {
+    std::string pathString(path);
+    std::replace(pathString.begin(), pathString.end(), '\\', '/');
+    std::shared_ptr<StorageBfsClientBase> storage_client = MountEntryResolver::get_instance()->resolve(pathString);
+
+    if (storage_client->isDefault()) {
+        return 0;
+    }
+
     if (config_options.invalidateOnSync) {
         syslog(LOG_INFO, "FSYNC : Request for forceful invalidation of directory : %s", path);
-        std::string pathString(path);
         storage_client->InvalidateDir(pathString.substr(1));
     }
 
@@ -534,7 +599,18 @@ int azs_chmod(const char *path, mode_t mode)
     std::replace(pathString.begin(), pathString.end(), '\\', '/');
     
     errno = 0;
-    int ret = storage_client->ChangeMode(pathString.c_str(), mode);
+    int ret = 0;
+    std::shared_ptr<StorageBfsClientBase> storage_client = MountEntryResolver::get_instance()->resolve(pathString);
+    if (storage_client->isDefault()) {
+        std::string mntPathString = prepend_mnt_path_string(pathString, false);
+        ret = chmod(mntPathString.c_str(), mode);
+        if (ret) {
+            return ret;
+        }
+        return 0;
+    }
+
+    ret = storage_client->ChangeMode(pathString.c_str(), mode);
     if (ret)
     {
         AZS_DEBUGLOGV("azs_chmod failed for path = %s, mode = %o.\n", path, mode);
@@ -572,30 +648,73 @@ int azs_rename(const char *src, const char *dst)
     if (errno != 0)
         return errno;
 
-    std::vector<std::string> to_remove;
-    if (storage_client->isADLS()) {
-        to_remove = storage_client->Rename(fromStr.c_str(), toStr.c_str());
-    } else {
-        if (stbuf.st_mode & S_IFDIR) {
-            // Rename a directory
-            to_remove = storage_client->Rename(fromStr.c_str(), toStr.c_str(), true);
+    std::shared_ptr<StorageBfsClientBase> from_storage_client = MountEntryResolver::get_instance()->resolve(fromStr);
+    std::shared_ptr<StorageBfsClientBase> to_storage_client = MountEntryResolver::get_instance()->resolve(toStr);
+
+    if (from_storage_client == to_storage_client && !from_storage_client->isDefault()) {
+        std::vector<std::string> to_remove;
+        if (from_storage_client->isADLS()) {
+            to_remove = from_storage_client->Rename(fromStr.c_str(), toStr.c_str());
         } else {
-            // Rename a file
-            to_remove = storage_client->Rename(fromStr.c_str(), toStr.c_str(), false);
+            if (stbuf.st_mode & S_IFDIR) {
+                // Rename a directory
+                to_remove = from_storage_client->Rename(fromStr.c_str(), toStr.c_str(), true);
+            } else {
+                // Rename a file
+                to_remove = from_storage_client->Rename(fromStr.c_str(), toStr.c_str(), false);
+            }
+        }
+        if (errno != 0 ) {
+            syslog(LOG_ERR, "Failed to rename %s, err : %d", fromStr.c_str(), errno);
+            return 0 - map_errno(errno);
+        }
+
+        for (unsigned int i = 0; i < to_remove.size(); i++)
+        {
+            struct stat buf;
+            if (0 == stat(to_remove.at(i).c_str(), &buf))
+                g_gc_cache->addCacheBytes(fromStr.c_str(), buf.st_size);
+
+            g_gc_cache->uncache_file(to_remove.at(i));
         }
     }
-    if (errno != 0 ) {
-        syslog(LOG_ERR, "Failed to rename %s, err : %d", fromStr.c_str(), errno);
-        return 0 - map_errno(errno);
+
+    if (from_storage_client == to_storage_client && from_storage_client->isDefault()) {
+        std::string srcMntPathString = prepend_mnt_path_string(fromStr, false);
+        std::string dstMntPathString = prepend_mnt_path_string(toStr, false);
+        rename_local_file(srcMntPathString, dstMntPathString);
     }
 
-    for (unsigned int i = 0; i < to_remove.size(); i++)
-    {
-        struct stat buf;
-        if (0 == stat(to_remove.at(i).c_str(), &buf))
-            g_gc_cache->addCacheBytes(fromStr.c_str(), buf.st_size);
+    if (from_storage_client != to_storage_client) {
+        std::string srcMntPathString = prepend_mnt_path_string(fromStr);
+        std::string dstMntPathString = prepend_mnt_path_string(toStr);
 
-        g_gc_cache->uncache_file(to_remove.at(i));
+        if (from_storage_client->isDefault()) {
+            srcMntPathString = prepend_mnt_path_string(fromStr, false);
+        }
+
+        if (to_storage_client->isDefault()) {
+            dstMntPathString = prepend_mnt_path_string(toStr, false);
+        }
+
+        if (stbuf.st_mode & S_IFDIR) {
+            std::string dstMntTmpPathString = prepend_mnt_path_string(dstMntPathString + "/placeholder", false);
+            ensure_files_directory_exists_in_local(dstMntTmpPathString);
+            boost::filesystem::copy(srcMntPathString.c_str(), dstMntTmpPathString.c_str());
+            azs_rmdir(src);
+            boost::filesystem::copy(dstMntTmpPathString.c_str(), dst);
+        } else {
+            if (to_storage_client->isDefault()) {
+                boost::filesystem::copy_file(srcMntPathString, dstMntPathString);
+                azs_unlink(src);
+            } else {
+                std::string dstMntTmpPathString = prepend_mnt_path_string(dstMntPathString + "/placeholder", false);
+                ensure_files_directory_exists_in_local(dstMntTmpPathString);
+                boost::filesystem::copy_file(srcMntPathString.c_str(), dstMntTmpPathString.c_str());
+                azs_unlink(src);
+                rename(dstMntTmpPathString.c_str(), dst);
+            }
+        }
     }
 
     return 0;

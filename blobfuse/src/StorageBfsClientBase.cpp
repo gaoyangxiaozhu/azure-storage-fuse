@@ -29,7 +29,7 @@ BfsFileProperty StorageBfsClientBase::GetFileProperties(const std::string /*path
     return BfsFileProperty();
 }
 
-int StorageBfsClientBase::ensure_directory_path_exists_cache(const std::string & file_path)
+int StorageBfsClientBase::ensure_directory_path_exists_local(const std::string & file_path)
 {
     char *pp;
     char *slash;

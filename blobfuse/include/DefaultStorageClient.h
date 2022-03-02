@@ -1,20 +1,18 @@
-#ifndef BLOCKBLOBBFSCLIENTBASE_H
-#define BLOCKBLOBBFSCLIENTBASE_H
+#ifndef DEFAULTSTORAGECLIENT_H
+#define DEFAULTSTORAGECLIENT_H
 
 #include <StorageBfsClientBase.h>
 
-
 using namespace azure::storage_lite;
 
-class BlockBlobBfsClient : public StorageBfsClientBase
+class DefaultStorageClient: public StorageBfsClientBase
 {
 public:
-    BlockBlobBfsClient(configParams opt) :
-    StorageBfsClientBase(opt),
-    m_blob_client(NULL)
+    DefaultStorageClient(configParams opt):
+    StorageBfsClientBase(opt)
     {}
-    
-    bool isDefault() { return false; }
+
+    bool isDefault() { return true; }
     bool isADLS() { return false; }
     ///<summary>
     /// Authenticates the storage account and container
@@ -105,53 +103,8 @@ public:
     int ChangeMode(const char* path, mode_t mode) override;
 
     int UpdateBlobProperty(std::string pathStr, std::string key, std::string value, METADATA *metadata = NULL);
-    virtual int RefreshSASToken(std::string sas);
+    int RefreshSASToken(std::string sas);
     void InvalidateFile(const std::string blob);
     void InvalidateDir(const std::string dir);
-    
-protected:
-    ///<summary>
-    /// Blob Client to make blob storage calls
-    ///</summary>
-    std::shared_ptr<blob_client_wrapper> m_blob_client;
-    ///<summary>
-    /// Helper function - Authenticates with an account key
-    ///</summary>
-    std::shared_ptr<blob_client_wrapper> authenticate_blob_accountkey();
-    ///<summary>
-    /// Helper function - Authenticates with an account sas
-    ///</summary>
-    std::shared_ptr<blob_client_wrapper> authenticate_blob_sas();
-    /// <summary>
-    /// Helper function - Get one valid account sas via linked_service
-    /// </summary>
-    /// <returns></returns>
-    std::string autheticate_blob_sas_with_linked_service();
-    ///<summary>
-    /// Helper function - Authenticates with msi
-    ///</summary>
-    std::shared_ptr<blob_client_wrapper> authenticate_blob_msi();
-    ///<summary>
-    /// Helper function - Authenticates with spn
-    ///</summary>
-    std::shared_ptr<blob_client_wrapper> authenticate_blob_spn();
-    /// <summary>
-    /// Helper function - Autheticates with AAD
-    /// </summary>
-    /// <returns></returns>
-    std::shared_ptr<blob_client_wrapper> autheticate_blob_aad();
-private:
-    ///<summary>
-    /// Helper function - Renames single file
-    ///</summary>
-    int rename_single_file(std::string src, std::string dst, std::vector<std::string> & files_to_remove_cache);
-    ///<summary>
-    /// Helper function - Renames directory
-    ///</summary>
-    int rename_directory(std::string src, std::string dst, std::vector<std::string> & files_to_remove_cache);
-    ///<summary>
-    /// Helper function - Checks metadata hdi_isfolder aka if the blob marker is a folder
-    ///</summary>
-    bool is_folder(const std::vector<std::pair<std::string,std::string>> & metadata);
 };
-#endif //BLOCKBLOBBFSCLIENTBASE_H
+#endif // DEFAULTSTORAGECLIENT_H

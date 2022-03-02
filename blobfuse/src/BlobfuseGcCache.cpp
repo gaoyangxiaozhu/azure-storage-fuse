@@ -119,8 +119,7 @@ void gc_cache::run_gc_cache()
 {
     unsigned long long evicted = 0;
 
-    while(true){
-
+    while(true) {
         // lock the deque
         file_to_delete file;
         bool is_empty;

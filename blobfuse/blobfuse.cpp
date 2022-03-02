@@ -7,17 +7,14 @@
 #include <dirent.h>
 #include <pwd.h>
 
-#include <include/StorageBfsClientBase.h>
-#include <include/BlockBlobBfsClient.h>
-#include <include/DataLakeBfsClient.h>
-#include <include/AttrCacheBfsClient.h>
+#include <include/MountsStoreRefreshManager.h>
+#include <include/MountEntryResolver.h>
 #include <BlobStreamer.h>
 
 const std::string log_ident = "blobfuse";
 struct cmdlineOptions cmd_options;
 struct configParams config_options;
 struct globalTimes_st globalTimes;
-std::shared_ptr<StorageBfsClientBase> storage_client;
 std::shared_ptr<BlobStreamer> blob_streamer;
 
 extern bool gZonalDNS;
@@ -40,6 +37,9 @@ namespace {
 #define OPTION(t, p) { t, offsetof(struct cmdlineOptions, p), 1 }
 const struct fuse_opt option_spec[] =
 {
+    OPTION("--hobo-account=%s", hobo_account),
+    OPTION("--hobo-container=%s", hobo_container),
+    OPTION("--hobo-sastoken=%s", hobo_sastoken),
     OPTION("--tmp-path=%s", tmp_path),
     OPTION("--config-file=%s", config_file),
     OPTION("--use-https=%s", useHttps),
@@ -157,7 +157,7 @@ int read_config_env()
         }
 
         if(env_auth_type)
-        {
+        {   
             config_options.authType = get_auth_type(env_auth_type);
         } else {
             config_options.authType = get_auth_type();
@@ -183,11 +183,7 @@ int read_config_env()
     }
     else
     {
-        syslog(LOG_CRIT, "Unable to start blobfuse.  No config file was specified and the AZURE_STORAGE_ACCOUNT"
-                         "environment variable was empty");
-        fprintf(stderr, "Unable to start blobfuse.  No config file was specified and the AZURE_STORAGE_ACCOUNT"
-                        "environment variable was empty\n");
-        return -1;
+        syslog(LOG_INFO, "No config file was specified and the AZURE_STORAGE_ACCOUNT environment variable was empty");
     }
 
     return 0;
@@ -229,7 +225,39 @@ int read_config(const std::string configFile)
         replace(line.begin(), line.end(), '\t', ' ');
         data.str(line.substr(line.find(" ")+1));
         const std::string value(trim(data.str()));
-    
+        if (line.find("clusterAccountName") != std::string::npos)
+        {
+            syslog(LOG_INFO, "Cluster HOBO account name found");
+            std::string clusterAccountNameStr(value);
+            config_options.clusterAccountName = clusterAccountNameStr;
+        } else {
+            syslog(LOG_ERR, "Unable to start blobfuse, missing hobo cluster account name");
+            fprintf(stderr, "Unable to start blobfuse, missing hobo cluster account name");
+            return -1;
+        }
+
+        if (line.find("clusterContainerName") != std::string::npos)
+        {
+            syslog(LOG_INFO, "Cluster HOBO cluster container name found");
+            std::string clusterContainerNameStr(value);
+            config_options.clusterContainerName = clusterContainerNameStr;
+        } else {
+            syslog(LOG_ERR, "Unable to start blobfuse, missing hobo cluster container name");
+            fprintf(stderr, "Unable to start blobfuse, missing hobo cluster container name");
+            return -1;
+        }
+
+        if (line.find("clusterSasToken") != std::string::npos)
+        {
+            syslog(LOG_INFO, "Cluster HOBO cluster sas token found");
+            std::string clusterSasTokenStr(value);
+            config_options.clusterSasToken = clusterSasTokenStr;
+        } else {
+            syslog(LOG_ERR, "Unable to start blobfuse, missing hobo cluster sas token");
+            fprintf(stderr, "Unable to start blobfuse, missing hobo cluster sas token");
+            return -1;
+        }
+
         if(line.find("accountName") != std::string::npos)
         {
             syslog(LOG_INFO, "Account name found");
@@ -318,6 +346,7 @@ int read_config(const std::string configFile)
         }
         else if(line.find("authType") != std::string::npos)
         {
+            syslog(LOG_INFO, "authType found");
             config_options.authType = get_auth_type(value);
             set_auth_type = true;
         }
@@ -375,20 +404,16 @@ int read_config(const std::string configFile)
     
     if(config_options.accountName.empty())
     {
-        syslog (LOG_CRIT, "Unable to start blobfuse. Account name is missing in the config file.");
-        fprintf(stderr, "Unable to start blobfuse. Account name is missing in the config file.\n");
-        return -1;
+        syslog(LOG_CRIT, "No found account name in the config file.");
+        fprintf(stderr, "No found account name in the config file.\n");
     }
     else if(config_options.containerName.empty())
     {
-        syslog (LOG_CRIT, "Unable to start blobfuse. Container name is missing in the config file.");
-        fprintf(stderr, "Unable to start blobfuse. Container name is missing in the config file.\n");
-        return -1;
+        syslog (LOG_CRIT, "No found container name in the config file.");
+        fprintf(stderr, "No found ontainer name in the config file.\n");
     }
-    else
-    {
-        return 0;
-    }
+
+    return 0;
 }
 
 void destroyBlobfuseOnAuthError()
@@ -448,8 +473,10 @@ void *azs_init(struct fuse_conn_info * conn)
     //  conn->want |= FUSE_CAP_WRITEBACK_CACHE | FUSE_CAP_EXPORT_SUPPORT; // TODO: Investigate putting this back in when we downgrade to fuse 2.9
 
     g_gc_cache = std::make_shared<gc_cache>(config_options.tmpPath, config_options.fileCacheTimeoutInSeconds);
+    syslog(LOG_INFO, "gc cache run started");
     g_gc_cache->run();
-    
+
+    std::shared_ptr<StorageBfsClientBase> storage_client = MountEntryResolver::get_instance()->resolve("/");
     if (!config_options.preMountValidate && libcurl_version < blobfuse_constants::minCurlVersion) {
         // Curl was not intialized for lower version as that results into
         // failure post fork. So tls and cpplite were not initialized pre-fork for lower
@@ -489,6 +516,7 @@ void *azs_init(struct fuse_conn_info * conn)
     if (config_options.authType == MSI_AUTH ||
         config_options.authType == SPN_AUTH)
     {
+        syslog(LOG_INFO, "auth type is MSI or SPN, start token monitor thread."); 
         std::shared_ptr<OAuthTokenCredentialManager> tokenManager;
         if (config_options.caCertFile.empty())
         {
@@ -496,7 +524,8 @@ void *azs_init(struct fuse_conn_info * conn)
         }
         else
         {
-            tokenManager = GetTokenManagerInstance(EmptyCallback, config_options.caCertFile, config_options.httpsProxy);        }
+            tokenManager = GetTokenManagerInstance(EmptyCallback, config_options.caCertFile, config_options.httpsProxy);        
+        }
 
         tokenManager->StartTokenMonitor();
     }
@@ -509,6 +538,10 @@ void *azs_init(struct fuse_conn_info * conn)
                             config_options.blockSize);
     }
 
+    MountsStoreRefreshManager::init(config_options, &destroyBlobfuseOnAuthError);
+    MountsStoreRefreshManager::get_instance()->StartMountsRefreshMonitor();
+
+    syslog(LOG_INFO, "azs_init run done!");  
     return NULL;
 }
 
@@ -599,7 +632,8 @@ int set_log_mask(const char * min_log_level_char, bool blobfuseInit)
 void set_new_sas_token()
 {
     syslog(LOG_DEBUG, "Sas Token Refresh");
-    storage_client->RefreshSASToken(config_options.sasToken);
+    // TODO refactor refresh sas token logic for each mnt path
+    // storage_client->RefreshSASToken(config_options.sasToken);
 }
 
 /*
@@ -787,9 +821,7 @@ bool is_directory_empty(const char *tmpDir) {
 }
 
 
-int 
-
-read_and_set_arguments(int argc, char *argv[], struct fuse_args *args)
+int read_and_set_arguments(int argc, char *argv[], struct fuse_args *args)
 {
     // FUSE has a standard method of argument parsing, here we just follow the pattern.
     *args = FUSE_ARGS_INIT(argc, argv);
@@ -856,17 +888,44 @@ read_and_set_arguments(int argc, char *argv[], struct fuse_args *args)
         config_options.mntPath = std::string(argv[1]);
 
         if(!cmd_options.config_file) {
-            fprintf(stdout, "no config file");
-            if(!cmd_options.container_name)
+            syslog(LOG_INFO, "no config file in cmd options\n");
+            if (cmd_options.hobo_account)
             {
-                syslog(LOG_CRIT, "Unable to start blobfuse, no config file provided and --container-name is not set.");
-                fprintf(stderr, "Error: No config file provided and --container-name is not set.\n");
-                print_usage();
-                return 1;
+                syslog(LOG_INFO, "Cluster HOBO account name found");
+                std::string clusterAccountNameStr(cmd_options.hobo_account);
+                config_options.clusterAccountName = clusterAccountNameStr;
+            } else {
+                syslog(LOG_ERR, "Unable to start blobfuse, missing hobo cluster account name");
+                fprintf(stderr, "Unable to start blobfuse, no luck, missing hobo cluster account name\n");
+                return -1;
             }
 
-            std::string container(cmd_options.container_name);
-            config_options.containerName = container;
+            if (cmd_options.hobo_container)
+            {
+                syslog(LOG_INFO, "Cluster HOBO cluster container name found");
+                std::string clusterContainerNameStr(cmd_options.hobo_container);
+                config_options.clusterContainerName = clusterContainerNameStr;
+            } else {
+                syslog(LOG_ERR, "Unable to start blobfuse, missing hobo cluster container name");
+                fprintf(stderr, "Unable to start blobfuse, missing hobo cluster container name\n");
+                return -1;
+            }
+
+            if (!cmd_options.hobo_sastoken)
+            {
+                syslog(LOG_INFO, "Cluster HOBO cluster sas token not found, using default one for test");
+                std::string clusterContainerNameStr = "sp=racwdl&st=2022-03-01T11:26:00Z&se=2022-03-11T19:26:00Z&sv=2020-08-04&sr=c&sig=R%2Fpw%2FmQrxE3tS54q5GJFoC5JZC6kL1onSI%2FPAGujqDM%3D";
+                config_options.clusterSasToken = clusterContainerNameStr;
+            }
+
+            if(!cmd_options.container_name)
+            {
+                syslog(LOG_INFO, "no container provided.");
+            } else {
+                std::string container(cmd_options.container_name);
+                config_options.containerName = container;
+            }
+
             if(cmd_options.httpsProxy)
             {
                 std::string httpsProxy(cmd_options.httpsProxy);
@@ -1300,7 +1359,7 @@ void configure_fuse(struct fuse_args *args)
 
 int initialize_blobfuse()
 {
-    if(0 != ensure_files_directory_exists_in_cache(prepend_mnt_path_string("/placeholder")))
+    if(0 != ensure_files_directory_exists_in_local(prepend_mnt_path_string("/placeholder")))
     {
         syslog(LOG_CRIT, "Unable to start blobfuse.  Failed to create directory on cache directory: %s, errno = %d.\n", prepend_mnt_path_string("/placeholder").c_str(),  errno);
         fprintf(stderr, "Failed to create directory on cache directory: %s, errno = %d.\n", prepend_mnt_path_string("/placeholder").c_str(),  errno);
@@ -1313,43 +1372,11 @@ int initialize_blobfuse()
     {
         config_options.httpsProxy = config_options.httpProxy;
     }
-    
-    //initialize storage client and authenticate, if we fail here, don't call fuse
-    if (config_options.useAttrCache) 
-    {
-        syslog(LOG_INFO, "Initializing blobfuse with attr caching enabled");
-        storage_client = std::make_shared<AttrCacheBfsClient>(config_options);
-    }
-    else if (config_options.useADLS)
-    {
-        syslog(LOG_INFO, "Initializing blobfuse using DataLake");
-        storage_client = std::make_shared<DataLakeBfsClient>(config_options);
-    }
-    else
-    {
-        syslog(LOG_INFO, "Initializing blobfuse using BlockBlob");
-        storage_client = std::make_shared<BlockBlobBfsClient>(config_options);
-        syslog(LOG_INFO, "Setup storage client");
-    }
 
+    MountsStore::init(config_options);
+    
     syslog(LOG_DEBUG, "Kernel version is %f", kernel_version);
     syslog(LOG_DEBUG, "libcurl version is %f", libcurl_version);
-
-    if (!config_options.preMountValidate && libcurl_version < blobfuse_constants::minCurlVersion) 
-    {
-        syslog(LOG_WARNING, "** Delaying authentication to post fork for older curl versions");
-    } else {
-        if(storage_client->AuthenticateStorage())
-        {
-            syslog(LOG_INFO, "Successfully Authenticated!");   
-        }
-        else
-        {
-            fprintf(stderr, "Unable to start blobfuse due to authentication or connectivity issues. Please check the readme for valid auth setups.\n");
-            syslog(LOG_ERR, "Unable to start blobfuse due to authentication or connectivity issues. Please check the readme for valid auth setups.");
-            return -1;
-        }
-    }
 
     globalTimes.lastModifiedTime = globalTimes.lastAccessTime = globalTimes.lastChangeTime = time(NULL);
     return 0;

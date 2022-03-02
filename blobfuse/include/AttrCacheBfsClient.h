@@ -179,6 +179,8 @@ public:
             blob_client = std::make_shared<BlockBlobBfsClient>(opt);
         }
     }
+    
+    bool isDefault() { return false; }
 
     bool isADLS() { return isAdlsMode; }
 

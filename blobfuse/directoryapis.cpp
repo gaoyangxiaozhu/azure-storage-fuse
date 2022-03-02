@@ -1,7 +1,7 @@
 #include <blobfuse.h>
 
-#include <include/StorageBfsClientBase.h>
-extern std::shared_ptr<StorageBfsClientBase> storage_client;
+#include <include/MountEntryResolver.h>
+
 extern time_t gMountTime;
 
 // TODO: Bug in azs_mkdir, should fail if the directory already exists.
@@ -9,12 +9,23 @@ int azs_mkdir(const char *path, mode_t)
 {
     AZS_DEBUGLOGV("mkdir called with path = %s\n", path);
 
-    std::string pathstr(path);
+    std::string pathStr(path);
     // Replace '\' with '/' as for azure storage they will be considered as path seperators
-    std::replace(pathstr.begin(), pathstr.end(), '\\', '/');
+    std::replace(pathStr.begin(), pathStr.end(), '\\', '/');
+
+    std::shared_ptr<StorageBfsClientBase> storage_client = MountEntryResolver::get_instance()->resolve(pathStr);
 
     errno = 0;
-    storage_client->CreateDirectory(pathstr.substr(1).c_str());
+    if (storage_client->isDefault()) {
+        int ret = mkdir(prepend_mnt_path_string(pathStr, false).c_str(), config_options.defaultPermission);
+        if (ret == -1) {
+            return errno;
+        }
+        return 0;
+    } else {
+        storage_client->CreateDirectory(pathStr.substr(1).c_str());
+    }
+
     if (errno != 0)
     {
         int storage_errno = errno;
@@ -60,7 +71,7 @@ int azs_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t, stru
     }
 
     std::string pathStr(path);
-    if (pathStr.size() > 1)
+    if (pathStr.size() > 1 && pathStr.back() != '/')
     {
         pathStr.push_back('/');
     }
@@ -68,15 +79,26 @@ int azs_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t, stru
     // Replace '\' with '/' as for azure storage they will be considered as path seperators
     std::replace(pathStr.begin(), pathStr.end(), '\\', '/');
 
+    std::shared_ptr<StorageBfsClientBase> storage_client = MountEntryResolver::get_instance()->resolve(pathStr);
+
+    DIR *dir_stream = nullptr;
+    std::string mntPathString = prepend_mnt_path_string(pathStr);
+    if (storage_client->isDefault()) {
+        mntPathString = prepend_mnt_path_string(pathStr, false);
+        dir_stream = opendir(mntPathString.c_str());
+    }
+
     std::vector<std::string> local_list_results;
 
     // Scan for any files that exist in the local cache.
     // It is possible that there are files in the cache that aren't on the service - if a file has been opened but not yet uplaoded, for example.
-    std::string mntPathString = prepend_mnt_path_string(pathStr);
-    DIR *dir_stream = opendir(mntPathString.c_str());
+    if (dir_stream == NULL) {
+        dir_stream = opendir(mntPathString.c_str());
+    }
+
     if (dir_stream != NULL)
     {
-        AZS_DEBUGLOGV("Reading contents of local cache directory %s.\n", mntPathString.c_str());
+        AZS_DEBUGLOGV("Reading contents of local directory %s.\n", mntPathString.c_str());        
         struct dirent* dir_ent = readdir(dir_stream);
         while (dir_ent != NULL)
         {
@@ -220,7 +242,6 @@ int azs_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t, stru
                     }
                 }
                 AZS_DEBUGLOGV("#### So far %u items retreived in %u iterations.\n", total_count, iteration);
-            
             }
         }
         else if (errno == 404)
@@ -250,9 +271,20 @@ int azs_rmdir(const char *path)
     
     // Replace '\' with '/' as for azure storage they will be considered as path seperators
     std::replace(pathString.begin(), pathString.end(), '\\', '/');
-
+    std::shared_ptr<StorageBfsClientBase> storage_client = MountEntryResolver::get_instance()->resolve(pathString);
     const char * mntPath;
     std::string mntPathString = prepend_mnt_path_string(pathString);
+    
+    if (storage_client->isDefault()) {
+        mntPathString = prepend_mnt_path_string(pathString, false);
+        mntPath = mntPathString.c_str();
+        int ret = rmdir(mntPath);
+        if (ret == -1) {
+            return errno;
+        }
+        return 0;
+    }
+
     mntPath = mntPathString.c_str();
 
     AZS_DEBUGLOGV("Attempting to delete local cache directory %s.\n", mntPath);

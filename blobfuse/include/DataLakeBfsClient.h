@@ -15,6 +15,7 @@ public:
     m_adls_client(NULL)
     {}
 
+    bool isDefault() { return false; }
     bool isADLS() { return true; }
     
     ///<summary>

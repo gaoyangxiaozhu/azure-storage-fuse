@@ -2,10 +2,9 @@
 #include <sys/file.h>
 #include <FileLockMap.h>
 
-#include <include/StorageBfsClientBase.h>
+#include <include/MountEntryResolver.h>
 #include <BlobStreamer.h>
 
-extern std::shared_ptr<StorageBfsClientBase> storage_client;
 extern std::shared_ptr<BlobStreamer> blob_streamer;
 
 std::shared_ptr<file_lock_map> file_lock_map::s_instance;
@@ -23,6 +22,8 @@ int DownloadFileToDisk(std::string pathString, std::string mntPathString, bool i
     std::string disk_path = mntPathString;
 
     syslog(LOG_DEBUG, "Starting download of file  %s", pathString.c_str());
+    std::shared_ptr<StorageBfsClientBase> storage_client = MountEntryResolver::get_instance()->resolve(pathString);
+
     long int size = storage_client->DownloadToFile(pathString.substr(1), disk_path, last_modified);
     if (errno != 0)
     {
@@ -64,10 +65,24 @@ int azs_open(const char *path, struct fuse_file_info *fi)
     syslog (LOG_DEBUG, "azs_open called with path = %s, fi->flags = %X.\n", path, fi->flags);
     std::string pathString(path);
     std::replace(pathString.begin(), pathString.end(), '\\', '/');
-    
-    const char * mntPath;
     std::string mntPathString = prepend_mnt_path_string(pathString);
-    mntPath = mntPathString.c_str();
+
+    std::shared_ptr<StorageBfsClientBase> storage_client = MountEntryResolver::get_instance()->resolve(pathString);
+    
+    if (storage_client->isDefault()) {
+        errno = 0;
+        int res;
+        mntPathString = prepend_mnt_path_string(pathString, false);
+        res = open(mntPathString.c_str(), fi->flags);
+        if (res == -1)
+        {
+            syslog(LOG_ERR, "Failed to open file %s in file.  errno = %d.", mntPathString.c_str(),  errno);
+            return -errno;
+        }
+        AZS_DEBUGLOGV("Opening %s gives fh = %d, errno = %d", pathString.c_str(), res, errno);
+    }
+
+    const char * mntPath = mntPathString.c_str();
 
     // Here, we lock the file path using the mutex.  This ensures that multiple threads aren't trying to create and download the same blob/file simultaneously.
     // We cannot use "flock" to prevent against this, because a) the file might not yet exist, and b) flock locks do not persist across file delete / recreate operations, and file renames.
@@ -140,7 +155,7 @@ int azs_open(const char *path, struct fuse_file_info *fi)
         {
             remove(mntPath);
 
-            if(0 != ensure_files_directory_exists_in_cache(mntPathString))
+            if(0 != ensure_files_directory_exists_in_local(mntPathString))
             {
                 syslog(LOG_ERR, "Failed to create file or directory on cache directory: %s, errno = %d.\n", mntPathString.c_str(),  errno);
                 return -1;
@@ -282,25 +297,29 @@ int azs_create(const char *path, mode_t mode, struct fuse_file_info *fi)
 
     std::string pathString(path);
     std::replace(pathString.begin(), pathString.end(), '\\', '/');
+    std::shared_ptr<StorageBfsClientBase> storage_client = MountEntryResolver::get_instance()->resolve(pathString);
 
+    int res;
+    std::string mntPathString = prepend_mnt_path_string(pathString);
+    if (storage_client->isDefault()) {
+        mntPathString = prepend_mnt_path_string(pathString, false);
+    } 
+
+    const char * mntPath = mntPathString.c_str();
+    ensure_files_directory_exists_in_local(mntPathString);
+    
     auto fmutex = file_lock_map::get_instance()->get_mutex(pathString.c_str());
     std::lock_guard<std::mutex> lock(*fmutex);
-
-    const char * mntPath;
-    std::string mntPathString = prepend_mnt_path_string(pathString);
-    mntPath = mntPathString.c_str();
-    int res;
-    ensure_files_directory_exists_in_cache(mntPathString);
 
     // FUSE will set the O_CREAT and O_WRONLY flags, but not O_EXCL, which is generally assumed for 'create' semantics.
     res = open(mntPath, fi->flags | O_EXCL, config_options.defaultPermission);
     if (res == -1)
     {
-        syslog(LOG_ERR, "Failure to open cache file %s in azs_open.  errno = %d\n.", path, errno);
+        syslog(LOG_ERR, "Failure to open local cache file %s in azs_open.  errno = %d\n.", path, errno);
         return -errno;
     }
-
-    // At this point, the file exists in the cache and we have an open file handle to it.  We now attempt to acquire the flock lock in shared mode, to be held while reading and writing to the file.
+    
+    // At this point, the file exists in the local and we have an open file handle to it.  We now attempt to acquire the flock lock in shared mode, to be held while reading and writing to the file.
     int lock_result = shared_lock_file(fi->flags, res);
     if(lock_result != 0)
     {
@@ -314,7 +333,7 @@ int azs_create(const char *path, mode_t mode, struct fuse_file_info *fi)
     fhwrap->file_name = pathString.substr(1);
 
     fi->fh = (long unsigned int)fhwrap;
-    syslog(LOG_INFO, "Successfully created file %s in file cache.\n", path);
+    syslog(LOG_INFO, "Successfully created file %s in file local.\n", path);
     AZS_DEBUGLOGV("Returning success from azs_create with file %s.\n", path);
     return 0;
 }
@@ -382,8 +401,17 @@ int azs_flush(const char *path, struct fuse_file_info *fi)
         }
     }
 
+    std::string pathString(path);
+    std::replace(pathString.begin(), pathString.end(), '\\', '/');
+    std::string mntPathString = prepend_mnt_path_string(pathString);
+    std::shared_ptr<StorageBfsClientBase> storage_client = MountEntryResolver::get_instance()->resolve(pathString);
+
+    if (storage_client->isDefault()) {
+        return 0;
+    }
+
     // Note that we don't have to prepend the tmpPath, because we already have it, because we're not using the input path but instead are querying for it.
-    std::string mntPathString = prepend_mnt_path_string("/" + fhw->file_name);
+    mntPathString = prepend_mnt_path_string("/" + fhw->file_name);
     const char *mntPath = mntPathString.c_str();
     if (access(mntPath, F_OK) != -1 )
     {
@@ -490,9 +518,16 @@ int azs_release(const char *path, struct fuse_file_info * fi)
     CLEAR_FHW_FLAG(fhw->flags, FILE_UPLOAD_ON_CLOSE);
     close(((struct fhwrapper *)fi->fh)->fh);
 
-// TODO: Make this method resiliant to renames of the file (same way flush() is)
+    // TODO: Make this method resiliant to renames of the file (same way flush() is)
     std::string pathString(path);
     std::replace(pathString.begin(), pathString.end(), '\\', '/');
+
+    std::shared_ptr<StorageBfsClientBase> storage_client = MountEntryResolver::get_instance()->resolve(pathString);
+    
+    if (storage_client->isDefault()) {
+        delete (struct fhwrapper *)fi->fh;
+        return 0;
+    }
 
     const char * mntPath;
     std::string mntPathString = prepend_mnt_path_string(pathString);
@@ -523,8 +558,21 @@ int azs_unlink(const char *path)
     std::string pathString(path);
     std::replace(pathString.begin(), pathString.end(), '\\', '/');
 
+    std::shared_ptr<StorageBfsClientBase> storage_client = MountEntryResolver::get_instance()->resolve(pathString);
     const char * mntPath;
     std::string mntPathString = prepend_mnt_path_string(pathString);
+    if (storage_client->isDefault()) {
+        mntPathString = prepend_mnt_path_string(pathString, false);
+        mntPath = mntPathString.c_str();
+        errno = 0;
+        int ret = unlink(mntPath);
+        if (ret == -1) {
+            return errno;
+        }
+
+        return 0;
+    }
+    
     mntPath = mntPathString.c_str();
 
     AZS_DEBUGLOGV("Attempting to delete file %s from local cache.\n", mntPath);
@@ -603,7 +651,14 @@ int azs_truncate(const char * path, off_t off)
 
     const char * mntPath;
     std::string mntPathString = prepend_mnt_path_string(pathString);
-    mntPath = mntPathString.c_str();
+    std::shared_ptr<StorageBfsClientBase> storage_client = MountEntryResolver::get_instance()->resolve(pathString);
+    
+    if (storage_client->isDefault()) {
+        mntPathString = prepend_mnt_path_string(pathString, false);
+        mntPath = mntPathString.c_str();
+    } else{
+        mntPath = mntPathString.c_str();
+    }
 
     if (config_options.backgroundDownload) {
         // Wait untill the download has finished
@@ -636,7 +691,7 @@ int azs_truncate(const char * path, off_t off)
         int truncret = truncate(mntPath, off);
         if (truncret == 0)
         {
-            AZS_DEBUGLOGV("Successfully truncated file %s in the local file cache.", mntPath);
+            AZS_DEBUGLOGV("Successfully truncated file %s in the local file.", mntPath);
             SET_FHW_FLAG(((struct fhwrapper *)fi.fh)->flags, FILE_UPLOAD_ON_CLOSE);
             int flushret = azs_flush(pathString.c_str(), &fi);
             if(flushret != 0)
@@ -749,6 +804,17 @@ int azs_readlink(const char *path, char *buf, size_t size)
     std::string pathString(path);
     std::replace(pathString.begin(), pathString.end(), '\\', '/');
 
+    std::shared_ptr<StorageBfsClientBase> storage_client = MountEntryResolver::get_instance()->resolve(pathString);
+
+    errno = 0;
+    if (storage_client->isDefault()) {
+         int ret = readlink(prepend_mnt_path_string(pathString, false).c_str(), buf, size);
+         if (ret != 0) {
+             return errno;
+         }
+         return 0;
+    }
+
     auto fmutex = file_lock_map::get_instance()->get_mutex(pathString.c_str());
     std::lock_guard<std::mutex> lock(*fmutex);
     std::stringstream os;
@@ -782,6 +848,17 @@ int azs_symlink(const char *from, const char *to)
     std::replace(fromStr.begin(), fromStr.end(), '\\', '/');
     std::replace(toStr.begin(), toStr.end(), '\\', '/');
 
+    std::shared_ptr<StorageBfsClientBase> from_storage_client = MountEntryResolver::get_instance()->resolve(fromStr);
+    std::shared_ptr<StorageBfsClientBase> to_storage_client = MountEntryResolver::get_instance()->resolve(toStr);
+
+    errno = 0;
+    if (to_storage_client->isDefault()) {
+        if(symlink(from, to) == -1) {
+            return 0;
+        };
+         return errno;
+    }
+
     auto fmutex = file_lock_map::get_instance()->get_mutex(fromStr.c_str());
     std::lock_guard<std::mutex> lock(*fmutex);
 
@@ -790,7 +867,7 @@ int azs_symlink(const char *from, const char *to)
     std::istringstream is(fromStr.c_str());
 
     errno = 0;
-    storage_client->UploadFromStream(is, toStr.c_str() + 1, metadata);
+    to_storage_client->UploadFromStream(is, toStr.c_str() + 1, metadata);
     if (errno != 0)
     {
         int storage_errno = errno;

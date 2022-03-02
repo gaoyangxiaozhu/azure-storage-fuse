@@ -283,6 +283,13 @@ public:
 
     std::string appendPrefixFolderPathIfHave(std::string path)
     {
+        std::string mntPath = configurations.mntPath.substr(1); // remove prefix `/`
+        size_t startpos = path.find(mntPath);
+        if (startpos != std::string::npos) 
+        {
+            path.replace(startpos, mntPath.length(), "/");
+        }
+
         // folder filed will like `synapse/`
         if (configurations.folder.length() != 0) {
             std::string folder = configurations.folder;
@@ -305,6 +312,8 @@ public:
 
         return path;
     }
+
+    virtual bool isDefault() = 0;
     virtual bool isADLS() = 0;
     
     ///<summary>
@@ -417,7 +426,7 @@ protected:
     /// Helper function - Ensures directory path exists in the cache
     /// TODO: refactoring, rename variables and add comments to make sense to parsing
     ///</summary>
-    int ensure_directory_path_exists_cache(const std::string & file_path);
+    int ensure_directory_path_exists_local(const std::string & file_path);
 
     bool mUseCache;
     std::mutex mAttrCacheMutex;

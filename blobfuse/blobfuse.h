@@ -56,13 +56,13 @@ int read_config(std::string configFile);
 
 // Helper function to prepend the 'tmpPath' to the input path.
 // Input is the logical file name being input to the FUSE API, output is the file name of the on-disk file in the file cache.
-std::string prepend_mnt_path_string(const std::string& path);
+std::string prepend_mnt_path_string(const std::string& path, const bool isUnderRoot = true);
 
 // Helper function to acquire a shared file lock while the file is open
 int shared_lock_file(int flags, int fd);
 
 // Helper function to create all directories in the path if they don't already exist.
-int ensure_files_directory_exists_in_cache(const std::string& file_path);
+int ensure_files_directory_exists_in_local(const std::string& file_path);
 
 // Greedily list all blobs using the input params.
 std::vector<std::pair<std::vector<list_blobs_segmented_item>, bool>> list_all_blobs_segmented(const std::string& container, const std::string& delimiter, const std::string& prefix, const std::size_t maxresults=0);
