@@ -75,19 +75,19 @@ bool DataLakeBfsClient::AuthenticateStorage()
             std::string errorString;
             switch (errno) {
                 case 5:
-                    errorString="Unable to start blobfuse. Couldn't resolve proxy name errno=";
+                    errorString="Couldn't resolve proxy name errno=";
                     break;
                 case 6:
-                    errorString="Unable to start blobfuse. DNS server lookup failed errno=";
+                    errorString="DNS server lookup failed errno=";
                     break;
                 case 28:
-                    errorString="Unable to start blobfuse. Connection timed out errno=";
+                    errorString="Connection timed out errno=";
                     break;
                 case 35:
-                    errorString="Unable to start blobfuse. Unknown SSL protocol error errno=";
+                    errorString="Unknown SSL protocol error errno=";
                     break;
                 default:
-                    errorString="Unable to start blobfuse. Failed to connect to the storage container. There might be something wrong about the storage config, please double check the storage account name, account key/sas token/OAuth access token and container name. errno=";
+                    errorString="Failed to connect to the storage container. There might be something wrong about the storage config, please double check the storage account name, account key/sas token/OAuth access token and container name. errno=";
                     break;
             }
             syslog(LOG_ERR,"%s%d\n",errorString.c_str(),errno);
@@ -626,9 +626,10 @@ int DataLakeBfsClient::List(std::string continuation, std::string prefix, std::s
         AZS_DEBUGLOGV("response item %d name before remove folder path is %s", (int)i, name.c_str());
         if (configurations.folder.length() != 0) {
             name = name.substr(configurations.folder.size());
-            resp.m_items[i].name = configurations.mntPath.substr(1) + name;
             AZS_DEBUGLOGV("response item %d name after remove folder path is %s", (int)i, name.c_str());
         }
+
+        resp.m_items[i].name = configurations.mntPath.substr(1) + name;
     }
 
     return errno;

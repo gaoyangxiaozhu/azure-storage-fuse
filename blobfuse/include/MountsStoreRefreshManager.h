@@ -1,42 +1,135 @@
 #include <MountsStore.h>
 #include <BlockBlobBfsClient.h>
 #include <cstdint>
+#include <mntent.h>
+#include <iostream>
+#include <fstream>
 #include <string>
 #include <json.hpp>
+#include <sw/redis++/redis++.h>
 
 using json = nlohmann::json;
+using namespace sw::redis;
+
+extern int stdErrFD;
 
 class MountsStoreRefreshManager {
     public:
-        static void init(configParams configs, void (*destroyBlobfuseOnAuthError)());
+        static void init(configParams configs);
         static MountsStoreRefreshManager* get_instance();
         void StartMountsRefreshMonitor();
         void RefreshMountsMonitor();    
     private:
-        MountsStoreRefreshManager(
-            configParams configs, void (*destroyBlobfuseOnAuthError)()):
+        MountsStoreRefreshManager(configParams configs):
             defaultConfigs(configs)
         {
-            struct configParams hoboContainerConfigs = defaultConfigs;
-            hoboContainerConfigs.accountName = hoboContainerConfigs.clusterAccountName;
-            hoboContainerConfigs.containerName = hoboContainerConfigs.clusterContainerName;
-            hoboContainerConfigs.sasToken = hoboContainerConfigs.clusterSasToken;
-            hoboContainerConfigs.authType = get_auth_type("sas");
-            syslog(LOG_INFO, "init hobo storage client with sas token %s", hoboContainerConfigs.sasToken.c_str());
-            hobo_storage_client = std::make_shared<BlockBlobBfsClient>(hoboContainerConfigs);
-            if (hobo_storage_client->AuthenticateStorage()) {
-                syslog(LOG_INFO, "Successfully Authenticated for hobo storage!");   
-            } else {
-                syslog(LOG_ERR, "Unable to start blobfuse due to autheticated to hobo storage failed");  
-                fprintf(stderr, "Unable to start blobfuse due to autheticated to hobo storage failed" );
-                std::thread t1(std::bind(destroyBlobfuseOnAuthError));
-                t1.detach();
-            }
         }
 
         static std::shared_ptr<MountsStoreRefreshManager> m_instance;
         configParams defaultConfigs;
         std::shared_ptr<StorageBfsClientBase> hobo_storage_client;
+
+        std::string getRedisServerAddress()
+        {
+            std::ifstream hostfile("/etc/hosts");
+            std::string line;
+            std::string redisAddress;
+            bool foundAddress = false;
+            while (!foundAddress) {
+                while (std::getline(hostfile, line))
+                {
+                    if (line.find("hostresolver") != std::string::npos)
+                    {
+                        int pos = line.find_first_of("\t");
+                        redisAddress = line.substr(0, pos);
+                        syslog(LOG_INFO, "get db address - %s", redisAddress.c_str());
+                        foundAddress = true;
+                        break;
+                    }
+                }
+
+                if (!foundAddress) {
+                    syslog(LOG_INFO, "can't get db address from hosts file, waitting another 5 sec..");
+                    sleep(5);
+                }
+            }
+
+            return redisAddress + ":6379";
+        }
+
+        bool is_directory_mounted(const char* mntDir) 
+        {
+            bool found = false;
+
+            if (!defaultConfigs.basicRemountCheck) {
+                syslog(LOG_INFO, "Using syscall to detect directory is already mounted or not");
+                struct mntent *mnt_ent;
+
+                FILE *mnt_list;
+
+                mnt_list = setmntent(_PATH_MOUNTED, "r");
+                while ((mnt_ent = getmntent(mnt_list))) 
+                {
+                    if (!strcmp(mnt_ent->mnt_dir, mntDir) && !strcmp(mnt_ent->mnt_type, "fuse")) 
+                    {
+                        found = true;
+                        break;
+                    }
+                }
+                endmntent(mnt_list);
+            } else {
+                syslog(LOG_INFO, "Reading /etc/mtab to detect directory is already mounted or not");
+                ssize_t read = 0;
+                size_t len = 0;
+                char *line = NULL;
+
+                FILE *fp = fopen("/etc/mtab", "r");
+                if (fp != NULL) {
+                    while ((read = getline(&line, &len, fp)) != -1) {
+                        if (strstr(line, mntDir) != NULL && strstr(line, "fuse") != NULL) 
+                        {
+                            found = true;
+                            break;
+                        }
+                    }
+                    fclose(fp);
+                }
+            }
+            
+            return found;
+        }
+
+        void destroyBlobfuseOnError()
+        {
+            char errStr[] = "Unmounting blobfuse.\n";
+            
+            syslog(LOG_ERR, errStr, sizeof(errStr));
+            ssize_t n = write(stdErrFD, errStr, sizeof(errStr));
+            if (n == -1) {
+                syslog(LOG_ERR, "Failed to report back failure.");
+            }
+            
+            fuse_unmount(config_options.mntPath.c_str(), NULL);
+
+            if (is_directory_mounted(config_options.mntPath.c_str())) 
+            {
+                char errStr[] = "Failed to unmount blobfuse. Manually unmount using fusermount command.\n";
+                syslog(LOG_ERR, errStr, sizeof(errStr));
+                ssize_t n = write(stdErrFD, errStr, sizeof(errStr));
+                if (n == -1) {
+                    syslog(LOG_ERR, "%s", errStr);
+                }
+            } else {
+                char errStr[] = "Unmounted blobfuse successfully.\n";
+                syslog(LOG_ERR, errStr, sizeof(errStr));
+                ssize_t n = write(stdErrFD, errStr, sizeof(errStr));
+                if (n == -1) {
+                    syslog(LOG_ERR, "%s", errStr);
+                }
+            }
+            close(stdErrFD);
+            exit(1);
+        }
 
         void RefreshMounts(
             std::map<std::string, std::string> existedMounts,
@@ -66,10 +159,13 @@ class MountsStoreRefreshManager {
                 // do unmount
                 for (auto & path : mountPointsNeedRemoved)
                 {
-                    std::string mntPath(defaultConfigs.mntPath + path.substr(1));
-                    syslog(LOG_INFO, "unmount %s.", mntPath.c_str());
+                    if (path.back() != '/') {
+                        path.push_back('/');
+                    }
+                    // TODO. remove the folder after unmount ?
+                    syslog(LOG_INFO, "unmount %s.", path.c_str());
                     MountsStore::get_instance()->remove(path);
-                    syslog(LOG_INFO, "unmount %s done.", mntPath.c_str());
+                    syslog(LOG_INFO, "unmount %s done.", path.c_str());
                 }
 
                 // do mount

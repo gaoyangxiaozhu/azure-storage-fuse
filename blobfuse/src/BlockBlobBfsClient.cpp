@@ -805,8 +805,8 @@ BlockBlobBfsClient::List(std::string continuation, std::string prefix, const std
         std::string name = resp.m_items[i].name;
         if (configurations.folder.length() != 0) {
             name = name.substr(configurations.folder.size());
-            resp.m_items[i].name = configurations.mntPath.substr(1) + name;
         }
+        resp.m_items[i].name = configurations.mntPath.substr(1) + name;
     }
 
     return errno;

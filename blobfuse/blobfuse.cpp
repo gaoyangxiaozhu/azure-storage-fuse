@@ -37,9 +37,6 @@ namespace {
 #define OPTION(t, p) { t, offsetof(struct cmdlineOptions, p), 1 }
 const struct fuse_opt option_spec[] =
 {
-    OPTION("--hobo-account=%s", hobo_account),
-    OPTION("--hobo-container=%s", hobo_container),
-    OPTION("--hobo-sastoken=%s", hobo_sastoken),
     OPTION("--tmp-path=%s", tmp_path),
     OPTION("--config-file=%s", config_file),
     OPTION("--use-https=%s", useHttps),
@@ -225,38 +222,6 @@ int read_config(const std::string configFile)
         replace(line.begin(), line.end(), '\t', ' ');
         data.str(line.substr(line.find(" ")+1));
         const std::string value(trim(data.str()));
-        if (line.find("clusterAccountName") != std::string::npos)
-        {
-            syslog(LOG_INFO, "Cluster HOBO account name found");
-            std::string clusterAccountNameStr(value);
-            config_options.clusterAccountName = clusterAccountNameStr;
-        } else {
-            syslog(LOG_ERR, "Unable to start blobfuse, missing hobo cluster account name");
-            fprintf(stderr, "Unable to start blobfuse, missing hobo cluster account name");
-            return -1;
-        }
-
-        if (line.find("clusterContainerName") != std::string::npos)
-        {
-            syslog(LOG_INFO, "Cluster HOBO cluster container name found");
-            std::string clusterContainerNameStr(value);
-            config_options.clusterContainerName = clusterContainerNameStr;
-        } else {
-            syslog(LOG_ERR, "Unable to start blobfuse, missing hobo cluster container name");
-            fprintf(stderr, "Unable to start blobfuse, missing hobo cluster container name");
-            return -1;
-        }
-
-        if (line.find("clusterSasToken") != std::string::npos)
-        {
-            syslog(LOG_INFO, "Cluster HOBO cluster sas token found");
-            std::string clusterSasTokenStr(value);
-            config_options.clusterSasToken = clusterSasTokenStr;
-        } else {
-            syslog(LOG_ERR, "Unable to start blobfuse, missing hobo cluster sas token");
-            fprintf(stderr, "Unable to start blobfuse, missing hobo cluster sas token");
-            return -1;
-        }
 
         if(line.find("accountName") != std::string::npos)
         {
@@ -538,7 +503,7 @@ void *azs_init(struct fuse_conn_info * conn)
                             config_options.blockSize);
     }
 
-    MountsStoreRefreshManager::init(config_options, &destroyBlobfuseOnAuthError);
+    MountsStoreRefreshManager::init(config_options);
     MountsStoreRefreshManager::get_instance()->StartMountsRefreshMonitor();
 
     syslog(LOG_INFO, "azs_init run done!");  
@@ -889,34 +854,6 @@ int read_and_set_arguments(int argc, char *argv[], struct fuse_args *args)
 
         if(!cmd_options.config_file) {
             syslog(LOG_INFO, "no config file in cmd options\n");
-            if (cmd_options.hobo_account)
-            {
-                syslog(LOG_INFO, "Cluster HOBO account name found");
-                std::string clusterAccountNameStr(cmd_options.hobo_account);
-                config_options.clusterAccountName = clusterAccountNameStr;
-            } else {
-                syslog(LOG_ERR, "Unable to start blobfuse, missing hobo cluster account name");
-                fprintf(stderr, "Unable to start blobfuse, no luck, missing hobo cluster account name\n");
-                return -1;
-            }
-
-            if (cmd_options.hobo_container)
-            {
-                syslog(LOG_INFO, "Cluster HOBO cluster container name found");
-                std::string clusterContainerNameStr(cmd_options.hobo_container);
-                config_options.clusterContainerName = clusterContainerNameStr;
-            } else {
-                syslog(LOG_ERR, "Unable to start blobfuse, missing hobo cluster container name");
-                fprintf(stderr, "Unable to start blobfuse, missing hobo cluster container name\n");
-                return -1;
-            }
-
-            if (!cmd_options.hobo_sastoken)
-            {
-                syslog(LOG_INFO, "Cluster HOBO cluster sas token not found, using default one for test");
-                std::string clusterContainerNameStr = "sp=racwdl&st=2022-03-01T11:26:00Z&se=2022-03-11T19:26:00Z&sv=2020-08-04&sr=c&sig=R%2Fpw%2FmQrxE3tS54q5GJFoC5JZC6kL1onSI%2FPAGujqDM%3D";
-                config_options.clusterSasToken = clusterContainerNameStr;
-            }
 
             if(!cmd_options.container_name)
             {

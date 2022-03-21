@@ -290,7 +290,7 @@ public:
             path.replace(startpos, mntPath.length(), "/");
         }
 
-        // folder filed will like `synapse/`
+        // folder filed will like `mnt/`
         if (configurations.folder.length() != 0) {
             std::string folder = configurations.folder;
             if (path != "") {

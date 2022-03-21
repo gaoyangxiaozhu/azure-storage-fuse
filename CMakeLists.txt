@@ -6,7 +6,8 @@ set(VERSION "1.4.0")
 # This macro is referred in code to print the current version
 # Change CPACK_DEBIAN_PACKAGE_DESCRIPTION as well in this file while bumping up the version
 add_definitions(-D_BLOBFUSE_VERSION_="1.4.0")
-
+set(CMAKE_CXX_STANDARD 11)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CPACK_PACKAGE_VERSION_MAJOR 1)
 set(CPACK_PACKAGE_VERSION_MINOR 4)  
 set(CPACK_PACKAGE_VERSION_PATCH 0)
@@ -90,6 +91,7 @@ endif()
 if(UNIX)
   #set( CMAKE_VERBOSE_MAKEFILE on )
   project(blobfuse)
+
   find_package(Threads REQUIRED)
   find_package(CURL REQUIRED)
   find_package(GnuTLS REQUIRED)
@@ -103,20 +105,33 @@ if(UNIX)
  # set(WARNING "-Wall -Wextra -Werror -pedantic -pedantic-errors")
   set(WARNING "-Wall -Wextra -Werror")
 
-  set(CMAKE_CXX_FLAGS "${CMAKE_THREAD_LIBS_INIT} ${WARNING} ${CMAKE_CXX_FLAGS}")
+  set(CMAKE_CXX_FLAGS "-std=c++11 ${CMAKE_THREAD_LIBS_INIT} ${WARNING} ${CMAKE_CXX_FLAGS}")
 
-  include_directories(${CMAKE_SOURCE_DIR}/blobfuse ${CMAKE_SOURCE_DIR}/blobfuse/include ${CMAKE_SOURCE_DIR}/cpplite/include ${CMAKE_SOURCE_DIR}/cpplite/adls/include ${CURL_INCLUDE_DIRS} ${GNUTLS_INCLUDE_DIR} ${Boost_INCLUDE_DIR} nlohmann-json)
+  # <------------ add hiredis dependency --------------->
+  find_path(HIREDIS_HEADER hiredis)
+  find_library(HIREDIS_LIB_STATIC libhiredis.a)
+
+  # <------------ add redis-plus-plus dependency -------------->
+  # NOTE: this should be *sw* NOT *redis++*
+  find_path(REDIS_PLUS_PLUS_HEADER sw)
+  find_library(REDIS_PLUS_PLUS_LIB_STATIC libredis++.a)
+
+  include_directories(${HIREDIS_HEADER}/hiredis ${REDIS_PLUS_PLUS_HEADER}/sw ${CMAKE_SOURCE_DIR}/blobfuse ${CMAKE_SOURCE_DIR}/blobfuse/include ${CMAKE_SOURCE_DIR}/cpplite/include ${CMAKE_SOURCE_DIR}/cpplite/adls/include ${CURL_INCLUDE_DIRS} ${GNUTLS_INCLUDE_DIR} ${Boost_INCLUDE_DIR} nlohmann-json)
   set(CMAKE_MACOSX_RPATH ON)
   pkg_search_module(UUID REQUIRED uuid)
   
   link_directories(${CMAKE_SOURCE_DIR}/cpplite/build.release)
+  link_directories(${HIREDIS_LIB_STATIC})
+  link_directories(${REDIS_PLUS_PLUS_LIB_STATIC})
+  message(${REDIS_PLUS_PLUS_LIB_STATIC})
+  message(${HIREDIS_LIB_STATIC})
 
   add_executable(blobfuse ${BLOBFUSE_HEADER} ${BLOBFUSE_SOURCE} blobfuse/main.cpp)
 
   if(INCLUDE_EXTRALIB)
-    target_link_libraries(blobfuse azure-storage-adls azure-storage-lite ${CURL_LIBRARIES} ${GNUTLS_LIBRARIES} ${CMAKE_THREAD_LIBS_INIT} ${UUID_LIBRARIES} ${Boost_FILESYSTEM_LIBRARY} ${Boost_SYSTEM_LIBRARY} ${Boost_THREAD_LIBRARY} fuse gcrypt stdc++ m dl)
+    target_link_libraries(blobfuse ${REDIS_PLUS_PLUS_LIB_STATIC} ${HIREDIS_LIB_STATIC} azure-storage-adls azure-storage-lite ${CURL_LIBRARIES} ${GNUTLS_LIBRARIES} ${CMAKE_THREAD_LIBS_INIT} ${UUID_LIBRARIES} ${Boost_FILESYSTEM_LIBRARY} ${Boost_SYSTEM_LIBRARY} ${Boost_THREAD_LIBRARY} fuse gcrypt stdc++ m dl)
   else()
-    target_link_libraries(blobfuse azure-storage-adls azure-storage-lite ${CURL_LIBRARIES} ${GNUTLS_LIBRARIES} ${CMAKE_THREAD_LIBS_INIT} ${UUID_LIBRARIES} ${Boost_FILESYSTEM_LIBRARY} ${Boost_SYSTEM_LIBRARY} ${Boost_THREAD_LIBRARY} fuse gcrypt)
+    target_link_libraries(blobfuse ${REDIS_PLUS_PLUS_LIB_STATIC} ${HIREDIS_LIB_STATIC} azure-storage-adls azure-storage-lite ${CURL_LIBRARIES} ${GNUTLS_LIBRARIES} ${CMAKE_THREAD_LIBS_INIT} ${UUID_LIBRARIES} ${Boost_FILESYSTEM_LIBRARY} ${Boost_SYSTEM_LIBRARY} ${Boost_THREAD_LIBRARY} fuse gcrypt)
   endif()
   install(TARGETS blobfuse
     PERMISSIONS OWNER_EXECUTE OWNER_WRITE OWNER_READ GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE

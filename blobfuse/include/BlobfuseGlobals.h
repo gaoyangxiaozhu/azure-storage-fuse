@@ -105,9 +105,6 @@ struct configParams
 // FUSE contains a specific type of command-line option parsing; here we are just following the pattern.
 struct cmdlineOptions
 {
-    const char *hobo_account;
-    const char *hobo_container;
-    const char *hobo_sastoken;
     const char *tmp_path; // Path to the temp / file cache directory
     const char *config_file; // Connection to Azure Storage information (account name, account key, etc)
     const char *useHttps; // True if https should be used (defaults to false)

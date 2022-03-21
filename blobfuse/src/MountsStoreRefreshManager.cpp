@@ -18,12 +18,12 @@ void from_json(const json &j, configParams &t)
 
 
 void MountsStoreRefreshManager::init(
-    configParams configs, void (*destroyBlobfuseOnAuthError)())
+    configParams configs)
 {
     if(nullptr == m_instance.get())
     {
         m_instance.reset(
-            new MountsStoreRefreshManager(configs, destroyBlobfuseOnAuthError));
+            new MountsStoreRefreshManager(configs));
     }
 
     return;
@@ -38,48 +38,77 @@ void MountsStoreRefreshManager::StartMountsRefreshMonitor()
 {
     std::thread t1(std::bind(&MountsStoreRefreshManager::RefreshMountsMonitor, this));
     t1.detach();
-    syslog(LOG_WARNING,"MountsStoreRefreshManager : monitor started");
+    syslog(LOG_INFO,"MountsStoreRefreshManager : monitor started");
 }
 
 void MountsStoreRefreshManager::RefreshMountsMonitor()
 {
-    while (true)
+    try
     {
-        sleep(1);
-        time_t last_modified = {};
-        std::string tmp_DiskPath = "/tmp/mount.json";
-        try
-        {
-            hobo_storage_client->DownloadToFile("mount.json", tmp_DiskPath, last_modified);
+        std::string address = getRedisServerAddress();
+
+        Redis redisClient = Redis("tcp://" + address);
+        syslog(LOG_INFO,"init redis db client successfullly.");
+
+        char* env_localtest = getenv("LOCAL_TEST_BLOBFUSE");
+        bool isLocalTest = false;
+        if (env_localtest) {
+            isLocalTest = strcmp(env_localtest, "true") == 0 ? true : false;
         }
-        catch(const std::exception& e)
+        syslog(LOG_INFO,"isLocalTest is set to %s", isLocalTest ? "true" : "false");
+        while (true)
         {
-            syslog(LOG_ERR, "fetch mount list from hobo container failed %s.", e.what());
-        }
-
-        std::ifstream stream(tmp_DiskPath);
-        std::string mounts_configs_str((std::istreambuf_iterator<char>(stream)), std::istreambuf_iterator<char>());
-        json jconfigs = json::parse(mounts_configs_str);
-
-        std::map<std::string, configParams> fetchedMounts;
-
-        for (auto it = jconfigs.begin(); it != jconfigs.end(); ++it) {
-            std::string mntPath = it.key();
-            if (mntPath.back() != '/')
+            sleep(1);
+            try
             {
-                mntPath.push_back('/');
-            }
-            struct configParams configs = defaultConfigs;
-            from_json(it.value(), configs);
-            std::string path = mntPath.substr(mntPath.find('/', 1)); // let's remove root path, example /tridenfs/mnt/ will be /mnt/
-            configs.mntPath = path;
-            fetchedMounts[path] = configs;
-        }
+                json jconfigs = json::parse("{}");
 
-        std::map<std::string, std::string> existedMounts = MountsStore::get_instance()->getMounts();
-        RefreshMounts(existedMounts, fetchedMounts);
-        unlink(tmp_DiskPath.c_str());
+                if (isLocalTest) {
+                    std::ifstream ifs("/home/gayangya/git/gaoyangxiaozhu/azure-storage-fuse/configs.json");
+                    std::string mounts((std::istreambuf_iterator<char>(ifs) ), (std::istreambuf_iterator<char>()));
+                    if (mounts.size() > 0) {
+                        jconfigs = json::parse(mounts);
+                    }
+                } else {
+                    OptionalString mounts = redisClient.get("mounts");
+                    if (mounts) {
+                        jconfigs = json::parse(*mounts);
+                    }
+                }
+                
+                std::map<std::string, configParams> fetchedMounts;
+
+                for (auto it = jconfigs.begin(); it != jconfigs.end(); ++it) {
+                    std::string mntPath = it.key();
+                    if (mntPath.back() != '/')
+                    {
+                        mntPath.push_back('/');
+                    }
+                    struct configParams configs = defaultConfigs;
+                    from_json(it.value(), configs);
+                    std::string path = mntPath.substr(mntPath.find('/', 1)); // let's remove root path, example /synfs/mnt/ will be /mnt/
+                    configs.mntPath = path;
+                    fetchedMounts[path] = configs;
+                }
+
+                std::map<std::string, std::string> existedMounts = MountsStore::get_instance()->getMounts();
+                RefreshMounts(existedMounts, fetchedMounts);
+                
+            }
+            catch(const std::exception& e)
+            {
+                syslog(LOG_ERR, "get mount list from db failed %s", e.what());
+            }
+        }
     }
+    catch(const std::exception& e)
+    {
+        syslog(LOG_ERR, "init redis db client failed with %s", e.what());
+        std::thread t1(std::bind(&MountsStoreRefreshManager::destroyBlobfuseOnError, this));
+        t1.detach();
+    }
+
+    syslog(LOG_ERR, "thread for polling mount list from db exit.");
 }
 
 std::shared_ptr<MountsStoreRefreshManager> MountsStoreRefreshManager::m_instance;
